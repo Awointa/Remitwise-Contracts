@@ -76,7 +76,7 @@ jobs:
 
       - name: Build Soroban contracts
         run: |
-          for contract in remittance_split savings_goals bill_payments insurance; do
+          for contract in remittance_split savings_goals bill_payments insurance recurring_remittance analytics rate_limiter; do
             echo "Building contract: $contract"
             cd $contract
             if command -v soroban &> /dev/null; then
@@ -94,7 +94,7 @@ jobs:
 
       - name: Verify WASM files exist
         run: |
-          for contract in remittance_split savings_goals bill_payments insurance; do
+          for contract in remittance_split savings_goals bill_payments insurance recurring_remittance analytics rate_limiter; do
             wasm_file="target/wasm32-unknown-unknown/release/${contract}.wasm"
             if [ ! -f "$wasm_file" ]; then
               echo "Error: WASM file not found: $wasm_file"

@@ -4,6 +4,9 @@ members = [
     "savings_goals",
     "bill_payments",
     "insurance",
+    "recurring_remittance",
+    "analytics",
+    "rate_limiter",
 ]
 resolver = "2"
 

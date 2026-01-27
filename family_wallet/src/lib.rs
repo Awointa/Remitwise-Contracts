@@ -248,7 +248,7 @@ impl FamilyWallet {
         }
 
         // Validate threshold
-        if threshold == 0 || threshold > signers.len() as u32 {
+        if threshold == 0 || threshold > signers.len() {
             panic!("Invalid threshold");
         }
 

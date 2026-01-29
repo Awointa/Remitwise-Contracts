@@ -1,0 +1,331 @@
+# Architecture Overview
+
+## System Architecture
+
+The Remitwise Contracts suite implements a comprehensive financial management system on the Stellar network using Soroban smart contracts. The architecture follows a modular design with clear separation of concerns and integrated data flow.
+
+## Contract Relationships
+
+```
+┌─────────────────┐    ┌─────────────────┐
+│   Remittance   │────│   Bill Payments │
+│     Split      │    │                 │
+│                 │    └─────────────────┘
+└─────────┬───────┘             │
+          │                     │
+          │                     │
+          v                     v
+┌─────────────────┐    ┌─────────────────┐
+│  Savings Goals  │    │    Insurance    │
+│                 │    │                 │
+└─────────────────┘    └─────────────────┘
+```
+
+## Data Flow Architecture
+
+### Remittance Processing Flow
+
+```
+Incoming Remittance
+        │
+        ▼
+┌─────────────────┐
+│ Remittance Split│  Calculate allocation percentages
+│   Contract      │  [spending, savings, bills, insurance]
+└───────┬─────────┘
+        │
+        ├─────────────┐
+        │             │
+        ▼             ▼
+┌─────────────┐ ┌─────────────┐
+│Savings Goals│ │Bill Payments│
+│             │ │             │
+└─────────────┘ └──────┬──────┘
+                       │
+                       ▼
+              ┌─────────────┐
+              │  Insurance  │
+              │             │
+              └─────────────┘
+```
+
+## Contract Details
+
+### 1. Remittance Split Contract
+
+**Purpose:** Central allocation engine for incoming remittances
+
+**Key Features:**
+
+- Percentage-based fund allocation
+- Owner-controlled configuration
+- Backward-compatible storage
+- Event-driven audit trail
+
+**Storage Structure:**
+
+```
+Instance Storage:
+├── CONFIG: SplitConfig { owner, percentages, initialized }
+├── SPLIT: Vec<u32> [spending, savings, bills, insurance]
+```
+
+**Relationships:**
+
+- **Provides:** Allocation ratios to other contracts
+- **Consumes:** None (entry point for remittances)
+
+### 2. Bill Payments Contract
+
+**Purpose:** Manage recurring and one-time bill payments
+
+**Key Features:**
+
+- Bill creation with due dates
+- Payment tracking and status
+- Recurring bill automation
+- Overdue bill identification
+
+**Storage Structure:**
+
+```
+Instance Storage:
+├── BILLS: Map<u32, Bill>
+├── NEXT_ID: u32
+```
+
+**Relationships:**
+
+- **Provides:** Bill payment tracking
+- **Consumes:** Allocation amounts from Remittance Split
+- **Integrates:** With Insurance for premium bills
+
+### 3. Insurance Contract
+
+**Purpose:** Insurance policy management and premium tracking
+
+**Key Features:**
+
+- Policy creation and activation
+- Monthly premium scheduling
+- Payment tracking
+- Policy deactivation
+
+**Storage Structure:**
+
+```
+Instance Storage:
+├── POLICIES: Map<u32, InsurancePolicy>
+├── NEXT_ID: u32
+```
+
+**Relationships:**
+
+- **Provides:** Insurance premium amounts
+- **Consumes:** Allocation amounts from Remittance Split
+- **Integrates:** With Bill Payments for premium tracking
+
+### 4. Savings Goals Contract
+
+**Purpose:** Goal-based savings management
+
+**Key Features:**
+
+- Goal creation with targets
+- Fund addition/withdrawal
+- Goal locking mechanism
+- Progress tracking
+
+**Storage Structure:**
+
+```
+Instance Storage:
+├── GOALS: Map<u32, SavingsGoal>
+├── NEXT_ID: u32
+```
+
+**Relationships:**
+
+- **Provides:** Savings allocation management
+- **Consumes:** Allocation amounts from Remittance Split
+
+## Integration Patterns
+
+### Automated Remittance Processing
+
+```rust
+fn process_remittance(env: Env, user: Address, amount: i128) {
+    // 1. Calculate allocations
+    let allocations = remittance_split::calculate_split(env, amount);
+
+    // 2. Allocate to savings
+    savings_goals::add_to_goal(env, user, primary_goal, allocations[1]);
+
+    // 3. Create bill payments
+    bill_payments::create_bill(env, user, "Monthly Bills", allocations[2], due_date, false, 0);
+
+    // 4. Pay insurance premiums
+    insurance::pay_premium(env, user, active_policy);
+}
+```
+
+### Cross-Contract Queries
+
+```rust
+fn get_financial_overview(env: Env, user: Address) -> FinancialOverview {
+    let unpaid_bills = bill_payments::get_total_unpaid(env, user);
+    let monthly_premium = insurance::get_total_monthly_premium(env, user);
+    let savings_goals = savings_goals::get_all_goals(env, user);
+    let split_config = remittance_split::get_config(env);
+
+    FinancialOverview {
+        unpaid_bills,
+        monthly_premium,
+        savings_goals,
+        split_config,
+    }
+}
+```
+
+## Security Architecture
+
+### Access Control
+
+- **Owner Authorization:** All operations require owner signature
+- **Contract Isolation:** Each user has isolated data
+- **Input Validation:** Comprehensive parameter validation
+- **State Consistency:** Atomic operations prevent inconsistent states
+
+### Storage Security
+
+- **TTL Management:** Automatic storage cleanup
+- **Instance Storage:** Efficient data organization
+- **Event Logging:** Complete audit trail
+- **Panic Handling:** Fail-fast on invalid operations
+
+## Event Architecture
+
+### Event Types
+
+```
+Bill Payments Events:
+├── BillEvent::Created
+├── BillEvent::Paid
+
+Insurance Events:
+├── InsuranceEvent::PolicyCreated
+├── InsuranceEvent::PremiumPaid
+├── InsuranceEvent::PolicyDeactivated
+
+Remittance Split Events:
+├── SplitEvent::Initialized
+├── SplitEvent::Updated
+├── SplitEvent::Calculated
+
+Savings Goals Events:
+├── SavingsEvent::GoalCreated
+├── SavingsEvent::FundsAdded
+├── SavingsEvent::FundsWithdrawn
+├── SavingsEvent::GoalCompleted
+├── SavingsEvent::GoalLocked
+├── SavingsEvent::GoalUnlocked
+```
+
+### Event Flow
+
+```
+User Action → Contract Function → State Change → Event Emission → Off-chain Processing
+```
+
+## Scalability Considerations
+
+### Storage Optimization
+
+- **Instance Storage:** Used for frequently accessed data
+- **TTL Extension:** Prevents storage bloat
+- **Efficient Maps:** O(1) access patterns
+- **Minimal Data Duplication:** Shared storage keys
+
+### Performance Patterns
+
+- **Batch Operations:** Minimize cross-contract calls
+- **Caching:** Client-side caching of configurations
+- **Pagination:** For large result sets
+- **Async Processing:** Event-driven architecture
+
+## Error Handling
+
+### Error Propagation
+
+```
+Contract Function
+    ├── Success → Return Result
+    ├── Validation Error → Panic with message
+    ├── Access Error → Panic with message
+    └── Storage Error → Panic with message
+```
+
+### Error Codes
+
+- **Bill Payments:** BillNotFound, BillAlreadyPaid, InvalidAmount, etc.
+- **Insurance:** Policy not found, unauthorized, inactive policy
+- **Remittance Split:** Invalid percentages, not initialized
+- **Savings Goals:** Goal not found, insufficient balance, locked goal
+
+## Testing Architecture
+
+### Unit Tests
+
+Each contract includes comprehensive unit tests covering:
+
+- Happy path scenarios
+- Error conditions
+- Edge cases
+- Integration scenarios
+
+### Integration Tests
+
+Cross-contract functionality testing:
+
+- Remittance processing workflows
+- Multi-contract state consistency
+- Event emission verification
+- Access control validation
+
+## Deployment Architecture
+
+### Network Deployment
+
+```
+Development → Testnet → Mainnet
+     │           │         │
+     ├── Unit Tests       │
+     └── Integration Tests└── Production Monitoring
+```
+
+### Contract Dependencies
+
+```
+Remittance Split ← Bill Payments
+Remittance Split ← Insurance
+Remittance Split ← Savings Goals
+```
+
+No circular dependencies ensure clean deployment order.
+
+## Future Extensibility
+
+### Contract Extensions
+
+- **Multi-currency support**
+- **Advanced scheduling**
+- **Automated payments**
+- **Reporting dashboards**
+- **Third-party integrations**
+
+### Architecture Evolution
+
+- **Plugin system** for custom allocation rules
+- **Sub-contracts** for specialized functionality
+- **Cross-chain bridges** for multi-network support
+- **Governance mechanisms** for protocol upgrades

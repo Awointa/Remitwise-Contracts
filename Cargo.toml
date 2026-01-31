@@ -12,6 +12,7 @@ members = [
     "insurance",
     "family_wallet",
     "data_migration",
+    "reporting",
 ]
 resolver = "2"
 

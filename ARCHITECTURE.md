@@ -19,6 +19,15 @@ The Remitwise Contracts suite implements a comprehensive financial management sy
 │  Savings Goals  │    │    Insurance    │
 │                 │    │                 │
 └─────────────────┘    └─────────────────┘
+          │                     │
+          │                     │
+          └──────────┬──────────┘
+                     │
+                     v
+            ┌─────────────────┐
+            │    Reporting    │
+            │   (Aggregator)  │
+            └─────────────────┘
 ```
 
 ## Data Flow Architecture
@@ -149,6 +158,34 @@ Instance Storage:
 - **Provides:** Savings allocation management
 - **Consumes:** Allocation amounts from Remittance Split
 
+### 5. Reporting Contract
+
+**Purpose:** Cross-contract data aggregation and comprehensive financial reporting
+
+**Key Features:**
+
+- Cross-contract data queries
+- Financial health score calculation
+- Multiple report types (remittance, savings, bills, insurance)
+- Trend analysis and period comparisons
+- Report storage and retrieval
+- Category-wise breakdowns
+
+**Storage Structure:**
+
+```
+Instance Storage:
+├── ADMIN: Address
+├── ADDRS: ContractAddresses
+├── REPORTS: Map<(Address, u64), FinancialHealthReport>
+```
+
+**Relationships:**
+
+- **Provides:** Aggregated financial insights and reports
+- **Consumes:** Data from all other contracts via cross-contract calls
+- **Integrates:** With remittance_split, savings_goals, bill_payments, insurance, family_wallet
+
 ## Integration Patterns
 
 ### Automated Remittance Processing
@@ -184,6 +221,33 @@ fn get_financial_overview(env: Env, user: Address) -> FinancialOverview {
         savings_goals,
         split_config,
     }
+}
+```
+
+### Reporting Integration
+
+The Reporting contract aggregates data from all contracts:
+
+```rust
+fn generate_financial_health_report(env: Env, user: Address) -> FinancialHealthReport {
+    // Query remittance split configuration
+    let split_client = RemittanceSplitClient::new(&env, &split_address);
+    let split_config = split_client.get_split(&env);
+
+    // Query savings progress
+    let savings_client = SavingsGoalsClient::new(&env, &savings_address);
+    let goals = savings_client.get_all_goals(user.clone());
+
+    // Query bill compliance
+    let bill_client = BillPaymentsClient::new(&env, &bills_address);
+    let unpaid_bills = bill_client.get_unpaid_bills(user.clone());
+
+    // Query insurance coverage
+    let insurance_client = InsuranceClient::new(&env, &insurance_address);
+    let policies = insurance_client.get_active_policies(user);
+
+    // Calculate health score and generate report
+    calculate_health_score_and_report(split_config, goals, unpaid_bills, policies)
 }
 ```
 
@@ -229,6 +293,11 @@ Savings Goals Events:
 ├── SavingsEvent::GoalCompleted
 ├── SavingsEvent::GoalLocked
 ├── SavingsEvent::GoalUnlocked
+
+Reporting Events:
+├── ReportEvent::ReportGenerated
+├── ReportEvent::ReportStored
+├── ReportEvent::AddressesConfigured
 ```
 
 ### Event Flow
@@ -309,9 +378,10 @@ Development → Testnet → Mainnet
 Remittance Split ← Bill Payments
 Remittance Split ← Insurance
 Remittance Split ← Savings Goals
+All Contracts ← Reporting (read-only queries)
 ```
 
-No circular dependencies ensure clean deployment order.
+No circular dependencies ensure clean deployment order. The Reporting contract should be deployed last after all other contracts are deployed and their addresses are known.
 
 ## Future Extensibility
 

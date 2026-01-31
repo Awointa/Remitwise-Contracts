@@ -11,12 +11,13 @@ This guide covers the deployment of the Remitwise Contracts suite to the Stellar
 
 ## Contracts Overview
 
-The Remitwise Contracts suite consists of four main contracts:
+The Remitwise Contracts suite consists of five main contracts:
 
 1. **Remittance Split** - Manages fund allocation percentages
 2. **Bill Payments** - Handles bill creation and payment tracking
 3. **Insurance** - Manages insurance policies and premiums
 4. **Savings Goals** - Tracks savings goals and fund management
+5. **Reporting** - Cross-contract aggregation and financial reporting
 
 ## Deployment Steps
 
@@ -50,6 +51,9 @@ cd ../remittance_split
 soroban contract build
 
 cd ../savings_goals
+soroban contract build
+
+cd ../reporting
 soroban contract build
 ```
 
@@ -114,6 +118,15 @@ SAVINGS_GOALS_ID=$(soroban contract deploy \
   --network testnet)
 
 echo "Savings Goals deployed: $SAVINGS_GOALS_ID"
+
+# Deploy Reporting contract (must be deployed last)
+cd ../reporting
+REPORTING_ID=$(soroban contract deploy \
+  --wasm target/wasm32-unknown-unknown/release/reporting.wasm \
+  --source deployer \
+  --network testnet)
+
+echo "Reporting deployed: $REPORTING_ID"
 ```
 
 ### 4. Initialize Contracts
@@ -128,6 +141,35 @@ soroban contract invoke \
   --network testnet \
   -- \
   init
+```
+
+#### Initialize Reporting Contract
+
+```bash
+# Initialize with admin address
+ADMIN_ADDRESS="GA..."  # Your admin address
+
+soroban contract invoke \
+  --id $REPORTING_ID \
+  --source deployer \
+  --network testnet \
+  -- \
+  init \
+  --admin $ADMIN_ADDRESS
+
+# Configure contract addresses
+soroban contract invoke \
+  --id $REPORTING_ID \
+  --source deployer \
+  --network testnet \
+  -- \
+  configure_addresses \
+  --caller $ADMIN_ADDRESS \
+  --remittance_split $REMittance_SPLIT_ID \
+  --savings_goals $SAVINGS_GOALS_ID \
+  --bill_payments $BILL_PAYMENTS_ID \
+  --insurance $INSURANCE_ID \
+  --family_wallet "GXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"  # Family wallet address
 ```
 
 ### 5. Configuration
@@ -177,6 +219,7 @@ REMittance_SPLIT_ID=$REMittance_SPLIT_ID
 BILL_PAYMENTS_ID=$BILL_PAYMENTS_ID
 INSURANCE_ID=$INSURANCE_ID
 SAVINGS_GOALS_ID=$SAVINGS_GOALS_ID
+REPORTING_ID=$REPORTING_ID
 EOF
 ```
 
@@ -204,6 +247,23 @@ Create a complete user workflow:
 3. Create insurance policies
 4. Create bills
 5. Simulate remittance processing
+6. Generate financial health report
+
+```bash
+# Generate a comprehensive financial health report
+USER_ADDRESS="GA..."
+
+soroban contract invoke \
+  --id $REPORTING_ID \
+  --source deployer \
+  --network testnet \
+  -- \
+  get_financial_health_report \
+  --user $USER_ADDRESS \
+  --total_remittance 10000000000 \
+  --period_start 1704067200 \
+  --period_end 1706745600
+```
 
 ## Troubleshooting
 

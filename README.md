@@ -11,6 +11,7 @@ This workspace contains the core smart contracts that power RemitWise's post-rem
 - **bill_payments**: Automated bill payment tracking and scheduling
 - **insurance**: Micro-insurance policy management and premium payments
 - **family_wallet**: Family member management with spending limits and permissions
+- **reporting**: Cross-contract aggregation and comprehensive financial reporting
 
 ## Prerequisites
 
@@ -35,6 +36,7 @@ cargo build --release --target wasm32-unknown-unknown
 Handles automatic allocation of remittance funds into different categories.
 
 **Key Functions:**
+
 - `initialize_split`: Set percentage allocation (spending, savings, bills, insurance)
 - `get_split`: Get current split configuration
 - `calculate_split`: Calculate actual amounts from total remittance
@@ -44,6 +46,7 @@ Handles automatic allocation of remittance funds into different categories.
 Manages goal-based savings with target dates.
 
 **Key Functions:**
+
 - `create_goal`: Create a new savings goal (education, medical, etc.)
 - `add_to_goal`: Add funds to a goal
 - `get_goal`: Get goal details
@@ -54,6 +57,7 @@ Manages goal-based savings with target dates.
 Tracks and manages bill payments with recurring support.
 
 **Key Functions:**
+
 - `create_bill`: Create a new bill (electricity, school fees, etc.)
 - `pay_bill`: Mark a bill as paid and create next recurring bill if applicable
 - `get_unpaid_bills`: Get all unpaid bills
@@ -64,6 +68,7 @@ Tracks and manages bill payments with recurring support.
 Manages micro-insurance policies and premium payments.
 
 **Key Functions:**
+
 - `create_policy`: Create a new insurance policy
 - `pay_premium`: Pay monthly premium
 - `get_active_policies`: Get all active policies
@@ -74,10 +79,27 @@ Manages micro-insurance policies and premium payments.
 Manages family members, roles, and spending limits.
 
 **Key Functions:**
+
 - `add_member`: Add a family member with role and spending limit
 - `get_member`: Get member details
 - `update_spending_limit`: Update spending limit for a member
 - `check_spending_limit`: Verify if spending is within limit
+
+### Reporting
+
+Aggregates data from all contracts to generate comprehensive financial reports.
+
+**Key Functions:**
+
+- `get_financial_health_report`: Generate comprehensive financial health report
+- `get_remittance_summary`: Get remittance allocation breakdown
+- `get_savings_report`: Get savings progress report
+- `get_bill_compliance_report`: Get bill payment compliance report
+- `get_insurance_report`: Get insurance coverage report
+- `calculate_health_score`: Calculate financial health score (0-100)
+- `get_trend_analysis`: Compare period-over-period trends
+- `store_report`: Store report for future reference
+- `get_stored_report`: Retrieve previously stored report
 
 ## Testing
 
@@ -140,4 +162,3 @@ This is a basic MVP implementation. Future enhancements:
 ## License
 
 MIT
-

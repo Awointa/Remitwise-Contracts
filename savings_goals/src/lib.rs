@@ -114,6 +114,25 @@ pub struct AuditEntry {
 
 const SNAPSHOT_VERSION: u32 = 1;
 const MAX_AUDIT_ENTRIES: u32 = 100;
+const CONTRACT_VERSION: u32 = 1;
+const MAX_BATCH_SIZE: u32 = 50;
+
+pub mod pause_functions {
+    use soroban_sdk::{symbol_short, Symbol};
+    pub const CREATE_GOAL: Symbol = symbol_short!("crt_goal");
+    pub const ADD_TO_GOAL: Symbol = symbol_short!("add_goal");
+    pub const WITHDRAW: Symbol = symbol_short!("withdraw");
+    pub const LOCK: Symbol = symbol_short!("lock");
+    pub const UNLOCK: Symbol = symbol_short!("unlock");
+}
+
+/// Single contribution for batch_add_to_goals
+#[contracttype]
+#[derive(Clone)]
+pub struct ContributionItem {
+    pub goal_id: u32,
+    pub amount: i128,
+}
 
 #[contractimpl]
 impl SavingsGoalContract {
@@ -135,6 +154,155 @@ impl SavingsGoalContract {
         {
             storage.set(&Self::STORAGE_GOALS, &Map::<u32, SavingsGoal>::new(&env));
         }
+    }
+
+    fn get_pause_admin(env: &Env) -> Option<Address> {
+        env.storage().instance().get(&symbol_short!("PAUSE_ADM"))
+    }
+    fn get_global_paused(env: &Env) -> bool {
+        env.storage()
+            .instance()
+            .get(&symbol_short!("PAUSED"))
+            .unwrap_or(false)
+    }
+    fn is_function_paused(env: &Env, func: Symbol) -> bool {
+        env.storage()
+            .instance()
+            .get::<_, Map<Symbol, bool>>(&symbol_short!("PAUSED_FN"))
+            .unwrap_or_else(|| Map::new(env))
+            .get(func)
+            .unwrap_or(false)
+    }
+    fn require_not_paused(env: &Env, func: Symbol) {
+        if Self::get_global_paused(env) {
+            panic!("Contract is paused");
+        }
+        if Self::is_function_paused(env, func) {
+            panic!("Function is paused");
+        }
+    }
+
+    pub fn set_pause_admin(env: Env, caller: Address, new_admin: Address) {
+        caller.require_auth();
+        let current = Self::get_pause_admin(&env);
+        match current {
+            None => {
+                if caller != new_admin {
+                    panic!("Unauthorized");
+                }
+            }
+            Some(admin) if admin != caller => panic!("Unauthorized"),
+            _ => {}
+        }
+        env.storage()
+            .instance()
+            .set(&symbol_short!("PAUSE_ADM"), &new_admin);
+    }
+    pub fn pause(env: Env, caller: Address) {
+        caller.require_auth();
+        let admin = Self::get_pause_admin(&env).expect("No pause admin set");
+        if admin != caller {
+            panic!("Unauthorized");
+        }
+        env.storage()
+            .instance()
+            .set(&symbol_short!("PAUSED"), &true);
+        env.events()
+            .publish((symbol_short!("savings"), symbol_short!("paused")), ());
+    }
+    pub fn unpause(env: Env, caller: Address) {
+        caller.require_auth();
+        let admin = Self::get_pause_admin(&env).expect("No pause admin set");
+        if admin != caller {
+            panic!("Unauthorized");
+        }
+        let unpause_at: Option<u64> = env.storage().instance().get(&symbol_short!("UNP_AT"));
+        if let Some(at) = unpause_at {
+            if env.ledger().timestamp() < at {
+                panic!("Time-locked unpause not yet reached");
+            }
+            env.storage().instance().remove(&symbol_short!("UNP_AT"));
+        }
+        env.storage()
+            .instance()
+            .set(&symbol_short!("PAUSED"), &false);
+        env.events()
+            .publish((symbol_short!("savings"), symbol_short!("unpaused")), ());
+    }
+    pub fn pause_function(env: Env, caller: Address, func: Symbol) {
+        caller.require_auth();
+        let admin = Self::get_pause_admin(&env).expect("No pause admin set");
+        if admin != caller {
+            panic!("Unauthorized");
+        }
+        let mut m: Map<Symbol, bool> = env
+            .storage()
+            .instance()
+            .get(&symbol_short!("PAUSED_FN"))
+            .unwrap_or_else(|| Map::new(&env));
+        m.set(func, true);
+        env.storage()
+            .instance()
+            .set(&symbol_short!("PAUSED_FN"), &m);
+    }
+    pub fn unpause_function(env: Env, caller: Address, func: Symbol) {
+        caller.require_auth();
+        let admin = Self::get_pause_admin(&env).expect("No pause admin set");
+        if admin != caller {
+            panic!("Unauthorized");
+        }
+        let mut m: Map<Symbol, bool> = env
+            .storage()
+            .instance()
+            .get(&symbol_short!("PAUSED_FN"))
+            .unwrap_or_else(|| Map::new(&env));
+        m.set(func, false);
+        env.storage()
+            .instance()
+            .set(&symbol_short!("PAUSED_FN"), &m);
+    }
+    pub fn is_paused(env: Env) -> bool {
+        Self::get_global_paused(&env)
+    }
+    pub fn get_version(env: Env) -> u32 {
+        env.storage()
+            .instance()
+            .get(&symbol_short!("VERSION"))
+            .unwrap_or(CONTRACT_VERSION)
+    }
+    fn get_upgrade_admin(env: &Env) -> Option<Address> {
+        env.storage().instance().get(&symbol_short!("UPG_ADM"))
+    }
+    pub fn set_upgrade_admin(env: Env, caller: Address, new_admin: Address) {
+        caller.require_auth();
+        let current = Self::get_upgrade_admin(&env);
+        match current {
+            None => {
+                if caller != new_admin {
+                    panic!("Unauthorized");
+                }
+            }
+            Some(adm) if adm != caller => panic!("Unauthorized"),
+            _ => {}
+        }
+        env.storage()
+            .instance()
+            .set(&symbol_short!("UPG_ADM"), &new_admin);
+    }
+    pub fn set_version(env: Env, caller: Address, new_version: u32) {
+        caller.require_auth();
+        let admin = Self::get_upgrade_admin(&env).expect("No upgrade admin set");
+        if admin != caller {
+            panic!("Unauthorized");
+        }
+        let prev = Self::get_version(env.clone());
+        env.storage()
+            .instance()
+            .set(&symbol_short!("VERSION"), &new_version);
+        env.events().publish(
+            (symbol_short!("savings"), symbol_short!("upgraded")),
+            (prev, new_version),
+        );
     }
 
     /// Create a new savings goal
@@ -160,6 +328,7 @@ impl SavingsGoalContract {
     ) -> u32 {
         // Access control: require owner authorization
         owner.require_auth();
+        Self::require_not_paused(&env, pause_functions::CREATE_GOAL);
 
         // Input validation
         if target_amount <= 0 {
@@ -186,7 +355,7 @@ impl SavingsGoalContract {
         let goal = SavingsGoal {
             id: next_id,
             owner: owner.clone(),
-            name,
+            name: name.clone(),
             target_amount,
             current_amount: 0,
             target_date,
@@ -237,6 +406,7 @@ impl SavingsGoalContract {
     pub fn add_to_goal(env: Env, caller: Address, goal_id: u32, amount: i128) -> i128 {
         // Access control: require caller authorization
         caller.require_auth();
+        Self::require_not_paused(&env, pause_functions::ADD_TO_GOAL);
 
         // Input validation
         if amount <= 0 {
@@ -253,41 +423,148 @@ impl SavingsGoalContract {
             .get(&symbol_short!("GOALS"))
             .unwrap_or_else(|| Map::new(&env));
 
-        if let Some(mut goal) = goals.get(goal_id) {
-            goal.current_amount += amount;
-            let new_total = goal.current_amount;
-            let was_completed = goal.current_amount >= goal.target_amount;
+        let mut goal = match goals.get(goal_id) {
+            Some(g) => g,
+            None => {
+                Self::append_audit(&env, symbol_short!("add"), &caller, false);
+                panic!("Goal not found");
+            }
+        };
 
-            goals.set(goal_id, goal.clone());
-            env.storage()
-                .instance()
-                .set(&symbol_short!("GOALS"), &goals);
+        // Access control: verify caller is the owner
+        if goal.owner != caller {
+            Self::append_audit(&env, symbol_short!("add"), &caller, false);
+            panic!("Goal not found");
+        }
 
-            // Emit FundsAdded event
-            let funds_event = FundsAddedEvent {
+        goal.current_amount = goal.current_amount.checked_add(amount).expect("overflow");
+        let new_total = goal.current_amount;
+        let was_completed = new_total >= goal.target_amount;
+        let previously_completed = (new_total - amount) >= goal.target_amount;
+
+        goals.set(goal_id, goal.clone());
+        env.storage()
+            .instance()
+            .set(&symbol_short!("GOALS"), &goals);
+
+        // Emit FundsAdded event
+        let funds_event = FundsAddedEvent {
+            goal_id,
+            amount,
+            new_total,
+            timestamp: env.ledger().timestamp(),
+        };
+        env.events().publish((FUNDS_ADDED,), funds_event);
+
+        // Emit GoalCompleted struct event if it just became completed
+        if was_completed && !previously_completed {
+            let completed_event = GoalCompletedEvent {
                 goal_id,
-                amount,
+                name: goal.name.clone(),
+                final_amount: new_total,
+                timestamp: env.ledger().timestamp(),
+            };
+            env.events().publish((GOAL_COMPLETED,), completed_event);
+        }
+
+        // Emit Audit/Enum Events
+        Self::append_audit(&env, symbol_short!("add"), &caller, true);
+        env.events().publish(
+            (symbol_short!("savings"), SavingsEvent::FundsAdded),
+            (goal_id, caller.clone(), amount),
+        );
+
+        if was_completed {
+            env.events().publish(
+                (symbol_short!("savings"), SavingsEvent::GoalCompleted),
+                (goal_id, caller),
+            );
+        }
+
+        new_total
+    }
+
+    /// Batch add to multiple goals (atomic). Caller must be owner of all goals.
+    pub fn batch_add_to_goals(
+        env: Env,
+        caller: Address,
+        contributions: Vec<ContributionItem>,
+    ) -> u32 {
+        caller.require_auth();
+        Self::require_not_paused(&env, pause_functions::ADD_TO_GOAL);
+        if contributions.len() as u32 > MAX_BATCH_SIZE {
+            panic!("Batch too large");
+        }
+        let goals_map: Map<u32, SavingsGoal> = env
+            .storage()
+            .instance()
+            .get(&symbol_short!("GOALS"))
+            .unwrap_or_else(|| Map::new(&env));
+        for item in contributions.iter() {
+            if item.amount <= 0 {
+                panic!("Amount must be positive");
+            }
+            let goal = goals_map.get(item.goal_id).expect("Goal not found");
+            if goal.owner != caller {
+                panic!("Not owner of all goals");
+            }
+        }
+        Self::extend_instance_ttl(&env);
+        let mut goals: Map<u32, SavingsGoal> = env
+            .storage()
+            .instance()
+            .get(&symbol_short!("GOALS"))
+            .unwrap_or_else(|| Map::new(&env));
+        let mut count = 0u32;
+        for item in contributions.iter() {
+            let mut goal = goals.get(item.goal_id).expect("Goal not found");
+            if goal.owner != caller {
+                panic!("Batch validation failed");
+            }
+            goal.current_amount = goal
+                .current_amount
+                .checked_add(item.amount)
+                .expect("overflow");
+            let new_total = goal.current_amount;
+            let was_completed = new_total >= goal.target_amount;
+            let previously_completed = (new_total - item.amount) >= goal.target_amount;
+            goals.set(item.goal_id, goal.clone());
+            let funds_event = FundsAddedEvent {
+                goal_id: item.goal_id,
+                amount: item.amount,
                 new_total,
                 timestamp: env.ledger().timestamp(),
             };
             env.events().publish((FUNDS_ADDED,), funds_event);
-
-            // Emit GoalCompleted event if goal just reached target
-            if was_completed && (new_total - amount) < goal.target_amount {
+            if was_completed && !previously_completed {
                 let completed_event = GoalCompletedEvent {
-                    goal_id,
+                    goal_id: item.goal_id,
                     name: goal.name.clone(),
                     final_amount: new_total,
                     timestamp: env.ledger().timestamp(),
                 };
                 env.events().publish((GOAL_COMPLETED,), completed_event);
             }
-
-            goal.current_amount
-        } else {
-            Self::append_audit(&env, symbol_short!("add"), &caller, false);
-            panic!("Goal not found");
+            env.events().publish(
+                (symbol_short!("savings"), SavingsEvent::FundsAdded),
+                (item.goal_id, caller.clone(), item.amount),
+            );
+            if was_completed {
+                env.events().publish(
+                    (symbol_short!("savings"), SavingsEvent::GoalCompleted),
+                    (item.goal_id, caller.clone()),
+                );
+            }
+            count += 1;
         }
+        env.storage()
+            .instance()
+            .set(&symbol_short!("GOALS"), &goals);
+        env.events().publish(
+            (symbol_short!("savings"), symbol_short!("batch_add")),
+            (count, caller),
+        );
+        count
     }
 
     /// Withdraw funds from a savings goal
@@ -310,6 +587,7 @@ impl SavingsGoalContract {
     pub fn withdraw_from_goal(env: Env, caller: Address, goal_id: u32, amount: i128) -> i128 {
         // Access control: require caller authorization
         caller.require_auth();
+        Self::require_not_paused(&env, pause_functions::WITHDRAW);
 
         // Input validation
         if amount <= 0 {
@@ -389,6 +667,7 @@ impl SavingsGoalContract {
     /// - If goal is not found
     pub fn lock_goal(env: Env, caller: Address, goal_id: u32) -> bool {
         caller.require_auth();
+        Self::require_not_paused(&env, pause_functions::LOCK);
         Self::extend_instance_ttl(&env);
 
         let mut goals: Map<u32, SavingsGoal> = env
@@ -436,6 +715,7 @@ impl SavingsGoalContract {
     /// - If goal is not found
     pub fn unlock_goal(env: Env, caller: Address, goal_id: u32) -> bool {
         caller.require_auth();
+        Self::require_not_paused(&env, pause_functions::UNLOCK);
         Self::extend_instance_ttl(&env);
 
         let mut goals: Map<u32, SavingsGoal> = env
@@ -529,7 +809,10 @@ impl SavingsGoalContract {
     pub fn get_nonce(env: Env, address: Address) -> u64 {
         let nonces: Option<Map<Address, u64>> =
             env.storage().instance().get(&symbol_short!("NONCES"));
-        nonces.as_ref().and_then(|m| m.get(address)).unwrap_or(0)
+        nonces
+            .as_ref()
+            .and_then(|m: &Map<Address, u64>| m.get(address))
+            .unwrap_or(0)
     }
 
     /// Export all goals as snapshot for backup/migration.
@@ -1002,117 +1285,4 @@ impl SavingsGoalContract {
 }
 
 #[cfg(test)]
-mod test {
-    use super::*;
-    use soroban_sdk::testutils::Events;
-
-    #[test]
-    fn test_create_goal_emits_event() {
-        let env = Env::default();
-        let contract_id = env.register_contract(None, SavingsGoalContract);
-        let client = SavingsGoalContractClient::new(&env, &contract_id);
-        let owner = Address::generate(&env);
-
-        // Create a goal
-        let goal_id = client.create_goal(
-            &owner,
-            &String::from_str(&env, "Education"),
-            &10000,
-            &1735689600, // Future date
-        );
-        assert_eq!(goal_id, 1);
-
-        // Verify event was emitted
-        let events = env.events().all();
-        assert_eq!(events.len(), 1);
-    }
-
-    #[test]
-    fn test_add_to_goal_emits_event() {
-        let env = Env::default();
-        let contract_id = env.register_contract(None, SavingsGoalContract);
-        let client = SavingsGoalContractClient::new(&env, &contract_id);
-        let owner = Address::generate(&env);
-
-        // Create a goal
-        let goal_id = client.create_goal(
-            &owner,
-            &String::from_str(&env, "Medical"),
-            &5000,
-            &1735689600,
-        );
-
-        // Get events before adding funds
-        let events_before = env.events().all().len();
-
-        env.mock_all_auths();
-
-        // Add funds
-        let new_amount = client.add_to_goal(&owner, &goal_id, &1000);
-        assert_eq!(new_amount, 1000);
-
-        // Verify 1 new event was emitted (FundsAdded event)
-        let events_after = env.events().all().len();
-        assert_eq!(events_after - events_before, 1);
-    }
-
-    #[test]
-    fn test_goal_completed_emits_event() {
-        let env = Env::default();
-        let contract_id = env.register_contract(None, SavingsGoalContract);
-        let client = SavingsGoalContractClient::new(&env, &contract_id);
-        let owner = Address::generate(&env);
-
-        // Create a goal with small target
-        let goal_id = client.create_goal(
-            &owner,
-            &String::from_str(&env, "Emergency Fund"),
-            &1000,
-            &1735689600,
-        );
-
-        // Get events before adding funds
-        let events_before = env.events().all().len();
-
-        env.mock_all_auths();
-
-        // Add funds to complete the goal
-        client.add_to_goal(&owner, &goal_id, &1000);
-
-        // Verify both FundsAdded and GoalCompleted events were emitted (2 new events)
-        let events_after = env.events().all().len();
-        assert_eq!(events_after - events_before, 2);
-    }
-
-    #[test]
-    fn test_multiple_goals_emit_separate_events() {
-        let env = Env::default();
-        let contract_id = env.register_contract(None, SavingsGoalContract);
-        let client = SavingsGoalContractClient::new(&env, &contract_id);
-        let owner = Address::generate(&env);
-
-        // Create multiple goals
-        client.create_goal(
-            &owner,
-            &String::from_str(&env, "Goal 1"),
-            &1000,
-            &1735689600,
-        );
-        client.create_goal(
-            &owner,
-            &String::from_str(&env, "Goal 2"),
-            &2000,
-            &1735689600,
-        );
-        client.create_goal(
-            &owner,
-            &String::from_str(&env, "Goal 3"),
-            &3000,
-            &1735689600,
-        );
-
-        // Should have 3 GoalCreated events
-        let events = env.events().all();
-        assert_eq!(events.len(), 3);
-    }
-}
+mod test;

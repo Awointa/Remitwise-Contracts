@@ -28,7 +28,7 @@ pub enum TransactionType {
     RegularWithdrawal = 6, // Below threshold, no multi-sig needed
 }
 
-/// Family member roles
+/// Family member roles (hierarchy: Owner > Admin > Member > Viewer)
 #[contracttype]
 #[derive(Clone, Copy, Debug, Eq, PartialEq, PartialOrd, Ord)]
 #[repr(u32)]
@@ -36,6 +36,7 @@ pub enum FamilyRole {
     Owner = 1,
     Admin = 2,
     Member = 3,
+    Viewer = 4,
 }
 
 /// Multi-signature configuration for a transaction type
@@ -121,6 +122,29 @@ pub struct StorageStats {
     pub archived_transactions: u32,
     pub total_members: u32,
     pub last_updated: u64,
+}
+
+/// Access audit entry for role/access changes (audit logging)
+#[contracttype]
+#[derive(Clone)]
+pub struct AccessAuditEntry {
+    pub operation: Symbol,
+    pub caller: Address,
+    pub target: Option<Address>,
+    pub timestamp: u64,
+    pub success: bool,
+}
+
+const CONTRACT_VERSION: u32 = 1;
+const MAX_ACCESS_AUDIT_ENTRIES: u32 = 100;
+const MAX_BATCH_MEMBERS: u32 = 30;
+
+/// Item for batch_add_family_members
+#[contracttype]
+#[derive(Clone)]
+pub struct BatchMemberItem {
+    pub address: Address,
+    pub role: FamilyRole,
 }
 
 /// Events for archival operations
@@ -271,6 +295,7 @@ impl FamilyWallet {
         spending_limit: i128,
     ) -> bool {
         caller.require_auth();
+        Self::require_not_paused(&env);
 
         let members: Map<Address, FamilyMember> = env
             .storage()
@@ -323,8 +348,9 @@ impl FamilyWallet {
         data: TransactionData,
     ) -> u64 {
         proposer.require_auth();
+        Self::require_not_paused(&env);
+        Self::require_role_at_least(&env, &proposer, FamilyRole::Member);
 
-        // Verify proposer is a family member
         if !Self::is_family_member(&env, &proposer) {
             panic!("Only family members can propose transactions");
         }
@@ -410,8 +436,9 @@ impl FamilyWallet {
     /// Sign a pending transaction
     pub fn sign_transaction(env: Env, signer: Address, tx_id: u64) -> bool {
         signer.require_auth();
+        Self::require_not_paused(&env);
+        Self::require_role_at_least(&env, &signer, FamilyRole::Member);
 
-        // Verify signer is a family member
         if !Self::is_family_member(&env, &signer) {
             panic!("Only family members can sign transactions");
         }
@@ -632,6 +659,7 @@ impl FamilyWallet {
         min_balance: i128,
     ) -> bool {
         caller.require_auth();
+        Self::require_not_paused(&env);
 
         if !Self::is_owner_or_admin(&env, &caller) {
             panic!("Only Owner or Admin can configure emergency settings");
@@ -662,6 +690,7 @@ impl FamilyWallet {
     /// Activate or deactivate emergency mode
     pub fn set_emergency_mode(env: Env, caller: Address, enabled: bool) -> bool {
         caller.require_auth();
+        Self::require_not_paused(&env);
 
         if !Self::is_owner_or_admin(&env, &caller) {
             panic!("Only Owner or Admin can change emergency mode");
@@ -688,8 +717,10 @@ impl FamilyWallet {
     /// Add a new family member (Owner or Admin only)
     pub fn add_family_member(env: Env, caller: Address, member: Address, role: FamilyRole) -> bool {
         caller.require_auth();
-
-        // Verify caller is Owner or Admin
+        Self::require_not_paused(&env);
+        if role == FamilyRole::Owner {
+            panic!("Cannot add Owner via add_family_member");
+        }
         if !Self::is_owner_or_admin(&env, &caller) {
             panic!("Only Owner or Admin can add family members");
         }
@@ -716,12 +747,14 @@ impl FamilyWallet {
             .instance()
             .set(&symbol_short!("MEMBERS"), &members);
 
+        Self::append_access_audit(&env, symbol_short!("add_mem"), &caller, Some(member), true);
         true
     }
 
     /// Remove a family member (Owner only)
     pub fn remove_family_member(env: Env, caller: Address, member: Address) -> bool {
         caller.require_auth();
+        Self::require_not_paused(&env);
 
         // Verify caller is Owner
         let owner: Address = env
@@ -752,6 +785,7 @@ impl FamilyWallet {
             .instance()
             .set(&symbol_short!("MEMBERS"), &members);
 
+        Self::append_access_audit(&env, symbol_short!("rem_mem"), &caller, Some(member), true);
         true
     }
 
@@ -827,6 +861,7 @@ impl FamilyWallet {
     /// Number of transactions archived
     pub fn archive_old_transactions(env: Env, caller: Address, before_timestamp: u64) -> u32 {
         caller.require_auth();
+        Self::require_not_paused(&env);
 
         if !Self::is_owner_or_admin(&env, &caller) {
             panic!("Only Owner or Admin can archive transactions");
@@ -920,6 +955,7 @@ impl FamilyWallet {
     /// Number of expired transactions removed
     pub fn cleanup_expired_pending(env: Env, caller: Address) -> u32 {
         caller.require_auth();
+        Self::require_not_paused(&env);
 
         if !Self::is_owner_or_admin(&env, &caller) {
             panic!("Only Owner or Admin can cleanup expired transactions");
@@ -978,6 +1014,244 @@ impl FamilyWallet {
                 total_members: 0,
                 last_updated: 0,
             })
+    }
+
+    /// Set optional role expiry for time-based access (Owner/Admin only).
+    pub fn set_role_expiry(
+        env: Env,
+        caller: Address,
+        member: Address,
+        expires_at: Option<u64>,
+    ) -> bool {
+        caller.require_auth();
+        Self::require_role_at_least(&env, &caller, FamilyRole::Admin);
+        Self::require_not_paused(&env);
+        Self::extend_instance_ttl(&env);
+        let mut m: Map<Address, u64> = env
+            .storage()
+            .instance()
+            .get(&symbol_short!("ROLE_EXP"))
+            .unwrap_or_else(|| Map::new(&env));
+        match expires_at {
+            Some(t) => m.set(member.clone(), t),
+            None => {
+                m.remove(member.clone());
+            }
+        }
+        env.storage().instance().set(&symbol_short!("ROLE_EXP"), &m);
+        Self::append_access_audit(&env, symbol_short!("role_exp"), &caller, Some(member), true);
+        true
+    }
+
+    pub fn get_role_expiry_public(env: Env, address: Address) -> Option<u64> {
+        Self::get_role_expiry(&env, &address)
+    }
+
+    /// Pause contract (Owner or Admin only).
+    pub fn pause(env: Env, caller: Address) -> bool {
+        caller.require_auth();
+        Self::require_role_at_least(&env, &caller, FamilyRole::Admin);
+        let admin = Self::get_pause_admin(&env).unwrap_or_else(|| {
+            env.storage()
+                .instance()
+                .get(&symbol_short!("OWNER"))
+                .expect("Wallet not initialized")
+        });
+        if admin != caller {
+            panic!("Only pause admin can pause");
+        }
+        env.storage()
+            .instance()
+            .set(&symbol_short!("PAUSED"), &true);
+        env.events()
+            .publish((symbol_short!("wallet"), symbol_short!("paused")), ());
+        true
+    }
+
+    /// Unpause (pause admin only).
+    pub fn unpause(env: Env, caller: Address) -> bool {
+        caller.require_auth();
+        let admin = Self::get_pause_admin(&env).unwrap_or_else(|| {
+            env.storage()
+                .instance()
+                .get(&symbol_short!("OWNER"))
+                .expect("Wallet not initialized")
+        });
+        if admin != caller {
+            panic!("Only pause admin can unpause");
+        }
+        env.storage()
+            .instance()
+            .set(&symbol_short!("PAUSED"), &false);
+        env.events()
+            .publish((symbol_short!("wallet"), symbol_short!("unpaused")), ());
+        true
+    }
+
+    pub fn set_pause_admin(env: Env, caller: Address, new_admin: Address) -> bool {
+        caller.require_auth();
+        Self::require_role_at_least(&env, &caller, FamilyRole::Owner);
+        env.storage()
+            .instance()
+            .set(&symbol_short!("PAUSE_ADM"), &new_admin);
+        true
+    }
+
+    pub fn is_paused(env: Env) -> bool {
+        Self::get_global_paused(&env)
+    }
+
+    pub fn get_version(env: Env) -> u32 {
+        env.storage()
+            .instance()
+            .get(&symbol_short!("VERSION"))
+            .unwrap_or(CONTRACT_VERSION)
+    }
+
+    fn get_upgrade_admin(env: &Env) -> Option<Address> {
+        env.storage().instance().get(&symbol_short!("UPG_ADM"))
+    }
+
+    pub fn set_upgrade_admin(env: Env, caller: Address, new_admin: Address) -> bool {
+        caller.require_auth();
+        Self::require_role_at_least(&env, &caller, FamilyRole::Owner);
+        env.storage()
+            .instance()
+            .set(&symbol_short!("UPG_ADM"), &new_admin);
+        true
+    }
+
+    pub fn set_version(env: Env, caller: Address, new_version: u32) -> bool {
+        caller.require_auth();
+        let admin = Self::get_upgrade_admin(&env).unwrap_or_else(|| {
+            env.storage()
+                .instance()
+                .get(&symbol_short!("OWNER"))
+                .expect("Wallet not initialized")
+        });
+        if admin != caller {
+            panic!("Only upgrade admin can set version");
+        }
+        let prev = Self::get_version(env.clone());
+        env.storage()
+            .instance()
+            .set(&symbol_short!("VERSION"), &new_version);
+        env.events().publish(
+            (symbol_short!("wallet"), symbol_short!("upgraded")),
+            (prev, new_version),
+        );
+        true
+    }
+
+    /// Batch add family members (Owner/Admin only). Atomic.
+    pub fn batch_add_family_members(
+        env: Env,
+        caller: Address,
+        members: Vec<BatchMemberItem>,
+    ) -> u32 {
+        caller.require_auth();
+        Self::require_role_at_least(&env, &caller, FamilyRole::Admin);
+        Self::require_not_paused(&env);
+        if members.len() as u32 > MAX_BATCH_MEMBERS {
+            panic!("Batch too large");
+        }
+        Self::extend_instance_ttl(&env);
+        let mut members_map: Map<Address, FamilyMember> = env
+            .storage()
+            .instance()
+            .get(&symbol_short!("MEMBERS"))
+            .expect("Wallet not initialized");
+        let timestamp = env.ledger().timestamp();
+        let mut count = 0u32;
+        for item in members.iter() {
+            if item.role == FamilyRole::Owner {
+                panic!("Cannot add Owner via batch");
+            }
+            members_map.set(
+                item.address.clone(),
+                FamilyMember {
+                    address: item.address.clone(),
+                    role: item.role.clone(),
+                    added_at: timestamp,
+                },
+            );
+            Self::append_access_audit(
+                &env,
+                symbol_short!("add_mem"),
+                &caller,
+                Some(item.address.clone()),
+                true,
+            );
+            count += 1;
+        }
+        env.storage()
+            .instance()
+            .set(&symbol_short!("MEMBERS"), &members_map);
+        Self::update_storage_stats(&env);
+        count
+    }
+
+    /// Batch remove family members (Owner only). Atomic.
+    pub fn batch_remove_family_members(env: Env, caller: Address, addresses: Vec<Address>) -> u32 {
+        caller.require_auth();
+        Self::require_role_at_least(&env, &caller, FamilyRole::Owner);
+        let owner: Address = env
+            .storage()
+            .instance()
+            .get(&symbol_short!("OWNER"))
+            .expect("Wallet not initialized");
+        if caller != owner {
+            panic!("Only Owner can remove members");
+        }
+        Self::require_not_paused(&env);
+        if addresses.len() as u32 > MAX_BATCH_MEMBERS {
+            panic!("Batch too large");
+        }
+        Self::extend_instance_ttl(&env);
+        let mut members_map: Map<Address, FamilyMember> = env
+            .storage()
+            .instance()
+            .get(&symbol_short!("MEMBERS"))
+            .expect("Wallet not initialized");
+        let mut count = 0u32;
+        for addr in addresses.iter() {
+            if addr.clone() == owner {
+                panic!("Cannot remove owner");
+            }
+            if members_map.get(addr.clone()).is_some() {
+                members_map.remove(addr.clone());
+                Self::append_access_audit(
+                    &env,
+                    symbol_short!("rem_mem"),
+                    &caller,
+                    Some(addr.clone()),
+                    true,
+                );
+                count += 1;
+            }
+        }
+        env.storage()
+            .instance()
+            .set(&symbol_short!("MEMBERS"), &members_map);
+        Self::update_storage_stats(&env);
+        count
+    }
+
+    /// Get recent access audit entries (read-only).
+    pub fn get_access_audit(env: Env, limit: u32) -> Vec<AccessAuditEntry> {
+        let entries: Vec<AccessAuditEntry> = env
+            .storage()
+            .instance()
+            .get(&symbol_short!("ACC_AUDIT"))
+            .unwrap_or_else(|| Vec::new(&env));
+        let n = entries.len().min(limit);
+        let mut out = Vec::new(&env);
+        for i in (entries.len().saturating_sub(n))..entries.len() {
+            if let Some(e) = entries.get(i) {
+                out.push_back(e);
+            }
+        }
+        out
     }
 
     // Internal helper functions
@@ -1081,7 +1355,6 @@ impl FamilyWallet {
                 0
             }
             (TransactionType::RoleChange, TransactionData::RoleChange(member, new_role)) => {
-                // Execute role change
                 let mut members: Map<Address, FamilyMember> = env
                     .storage()
                     .instance()
@@ -1094,6 +1367,13 @@ impl FamilyWallet {
                     env.storage()
                         .instance()
                         .set(&symbol_short!("MEMBERS"), &members);
+                    Self::append_access_audit(
+                        env,
+                        symbol_short!("role_chg"),
+                        proposer,
+                        Some(member.clone()),
+                        true,
+                    );
                 }
                 0
             }
@@ -1157,6 +1437,87 @@ impl FamilyWallet {
             matches!(member.role, FamilyRole::Owner | FamilyRole::Admin)
         } else {
             false
+        }
+    }
+
+    /// Role hierarchy: Owner(1) > Admin(2) > Member(3) > Viewer(4). Lower ordinal = higher privilege.
+    fn role_ordinal(role: FamilyRole) -> u32 {
+        role as u32
+    }
+    fn get_role_expiry(env: &Env, address: &Address) -> Option<u64> {
+        env.storage()
+            .instance()
+            .get::<_, Map<Address, u64>>(&symbol_short!("ROLE_EXP"))
+            .unwrap_or_else(|| Map::new(env))
+            .get(address.clone())
+    }
+    fn role_has_expired(env: &Env, address: &Address) -> bool {
+        if let Some(exp) = Self::get_role_expiry(env, address) {
+            env.ledger().timestamp() >= exp
+        } else {
+            false
+        }
+    }
+    /// Panics if caller does not have at least min_role or role has expired.
+    fn require_role_at_least(env: &Env, caller: &Address, min_role: FamilyRole) {
+        let members: Map<Address, FamilyMember> = env
+            .storage()
+            .instance()
+            .get(&symbol_short!("MEMBERS"))
+            .expect("Wallet not initialized");
+        let member = members.get(caller.clone()).expect("Not a family member");
+        if Self::role_has_expired(env, caller) {
+            panic!("Role has expired");
+        }
+        if Self::role_ordinal(member.role) > Self::role_ordinal(min_role) {
+            panic!("Insufficient role");
+        }
+    }
+    fn append_access_audit(
+        env: &Env,
+        operation: Symbol,
+        caller: &Address,
+        target: Option<Address>,
+        success: bool,
+    ) {
+        let mut entries: Vec<AccessAuditEntry> = env
+            .storage()
+            .instance()
+            .get(&symbol_short!("ACC_AUDIT"))
+            .unwrap_or_else(|| Vec::new(env));
+        entries.push_back(AccessAuditEntry {
+            operation,
+            caller: caller.clone(),
+            target,
+            timestamp: env.ledger().timestamp(),
+            success,
+        });
+        let n = entries.len();
+        if n > MAX_ACCESS_AUDIT_ENTRIES {
+            let mut v = Vec::new(env);
+            let start = n - MAX_ACCESS_AUDIT_ENTRIES;
+            for i in start..n {
+                v.push_back(entries.get(i).unwrap());
+            }
+            entries = v;
+        }
+        env.storage()
+            .instance()
+            .set(&symbol_short!("ACC_AUDIT"), &entries);
+    }
+
+    fn get_pause_admin(env: &Env) -> Option<Address> {
+        env.storage().instance().get(&symbol_short!("PAUSE_ADM"))
+    }
+    fn get_global_paused(env: &Env) -> bool {
+        env.storage()
+            .instance()
+            .get(&symbol_short!("PAUSED"))
+            .unwrap_or(false)
+    }
+    fn require_not_paused(env: &Env) {
+        if Self::get_global_paused(env) {
+            panic!("Contract is paused");
         }
     }
 

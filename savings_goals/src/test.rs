@@ -2,7 +2,7 @@
 
 use super::*;
 use soroban_sdk::{
-    testutils::{Address as AddressTrait, Ledger, LedgerInfo},
+    testutils::{Address as AddressTrait, Events, Ledger, LedgerInfo},
     Address, Env, String,
 };
 
@@ -562,4 +562,268 @@ fn test_savings_schedule_goal_completion() {
     let goal = client.get_goal(&goal_id).unwrap();
     assert_eq!(goal.current_amount, 1000);
     assert!(client.is_goal_completed(&goal_id));
+}
+
+#[test]
+fn test_lock_goal_success() {
+    let env = Env::default();
+    let contract_id = env.register_contract(None, SavingsGoalContract);
+    let client = SavingsGoalContractClient::new(&env, &contract_id);
+    let user = Address::generate(&env);
+
+    client.init();
+    env.mock_all_auths();
+    let id = client.create_goal(
+        &user,
+        &String::from_str(&env, "Lock Test"),
+        &1000,
+        &2000000000,
+    );
+
+    client.unlock_goal(&user, &id);
+    assert!(!client.get_goal(&id).unwrap().locked);
+
+    client.lock_goal(&user, &id);
+    assert!(client.get_goal(&id).unwrap().locked);
+}
+
+#[test]
+fn test_unlock_goal_success() {
+    let env = Env::default();
+    let contract_id = env.register_contract(None, SavingsGoalContract);
+    let client = SavingsGoalContractClient::new(&env, &contract_id);
+    let user = Address::generate(&env);
+
+    client.init();
+    env.mock_all_auths();
+    let id = client.create_goal(
+        &user,
+        &String::from_str(&env, "Unlock Test"),
+        &1000,
+        &2000000000,
+    );
+
+    assert!(client.get_goal(&id).unwrap().locked);
+
+    client.unlock_goal(&user, &id);
+    assert!(!client.get_goal(&id).unwrap().locked);
+}
+
+#[test]
+#[should_panic(expected = "Only the goal owner can lock this goal")]
+fn test_lock_goal_unauthorized_panics() {
+    let env = Env::default();
+    let contract_id = env.register_contract(None, SavingsGoalContract);
+    let client = SavingsGoalContractClient::new(&env, &contract_id);
+    let user = Address::generate(&env);
+    let other = Address::generate(&env);
+
+    client.init();
+    env.mock_all_auths();
+    let id = client.create_goal(
+        &user,
+        &String::from_str(&env, "Auth Test"),
+        &1000,
+        &2000000000,
+    );
+
+    client.unlock_goal(&user, &id);
+
+    client.lock_goal(&other, &id);
+}
+
+#[test]
+#[should_panic(expected = "Only the goal owner can unlock this goal")]
+fn test_unlock_goal_unauthorized_panics() {
+    let env = Env::default();
+    let contract_id = env.register_contract(None, SavingsGoalContract);
+    let client = SavingsGoalContractClient::new(&env, &contract_id);
+    let user = Address::generate(&env);
+    let other = Address::generate(&env);
+
+    client.init();
+    env.mock_all_auths();
+    let id = client.create_goal(
+        &user,
+        &String::from_str(&env, "Auth Test"),
+        &1000,
+        &2000000000,
+    );
+
+    client.unlock_goal(&other, &id);
+}
+
+#[test]
+#[should_panic(expected = "Cannot withdraw from a locked goal")]
+fn test_withdraw_after_lock_fails() {
+    let env = Env::default();
+    let contract_id = env.register_contract(None, SavingsGoalContract);
+    let client = SavingsGoalContractClient::new(&env, &contract_id);
+    let user = Address::generate(&env);
+
+    client.init();
+    env.mock_all_auths();
+    let id = client.create_goal(
+        &user,
+        &String::from_str(&env, "Withdraw Fail"),
+        &1000,
+        &2000000000,
+    );
+
+    client.unlock_goal(&user, &id);
+    client.add_to_goal(&user, &id, &500);
+    client.lock_goal(&user, &id);
+
+    client.withdraw_from_goal(&user, &id, &100);
+}
+
+#[test]
+fn test_withdraw_after_unlock_succeeds() {
+    let env = Env::default();
+    let contract_id = env.register_contract(None, SavingsGoalContract);
+    let client = SavingsGoalContractClient::new(&env, &contract_id);
+    let user = Address::generate(&env);
+
+    client.init();
+    env.mock_all_auths();
+    let id = client.create_goal(
+        &user,
+        &String::from_str(&env, "Withdraw Success"),
+        &1000,
+        &2000000000,
+    );
+
+    client.unlock_goal(&user, &id);
+    client.add_to_goal(&user, &id, &500);
+
+    let new_balance = client.withdraw_from_goal(&user, &id, &200);
+    assert_eq!(new_balance, 300);
+
+    let goal = client.get_goal(&id).unwrap();
+    assert_eq!(goal.current_amount, 300);
+}
+
+#[test]
+#[should_panic(expected = "Goal not found")]
+fn test_lock_nonexistent_goal_panics() {
+    let env = Env::default();
+    let contract_id = env.register_contract(None, SavingsGoalContract);
+    let client = SavingsGoalContractClient::new(&env, &contract_id);
+    let user = Address::generate(&env);
+
+    client.init();
+    env.mock_all_auths();
+
+    client.lock_goal(&user, &99);
+}
+
+#[test]
+fn test_create_goal_emits_event() {
+    let env = Env::default();
+    let contract_id = env.register_contract(None, SavingsGoalContract);
+    let client = SavingsGoalContractClient::new(&env, &contract_id);
+    let user = Address::generate(&env);
+
+    client.init();
+    env.mock_all_auths();
+
+    // Create a goal
+    let goal_id = client.create_goal(
+        &user,
+        &String::from_str(&env, "Education"),
+        &10000,
+        &1735689600, // Future date
+    );
+    assert_eq!(goal_id, 1);
+
+    // Verify 2 events were emitted:
+    // 1. GoalCreated struct event
+    // 2. SavingsEvent::GoalCreated enum event (audit)
+    let events = env.events().all();
+    assert_eq!(events.len(), 2);
+}
+
+#[test]
+fn test_add_to_goal_emits_event() {
+    let env = Env::default();
+    let contract_id = env.register_contract(None, SavingsGoalContract);
+    let client = SavingsGoalContractClient::new(&env, &contract_id);
+    let user = Address::generate(&env);
+
+    client.init();
+    env.mock_all_auths();
+
+    // Create a goal
+    let goal_id = client.create_goal(
+        &user,
+        &String::from_str(&env, "Medical"),
+        &5000,
+        &1735689600,
+    );
+
+    // Get events before adding funds (should be 2 from creation)
+    let events_before = env.events().all().len();
+
+    // Add funds
+    let new_amount = client.add_to_goal(&user, &goal_id, &1000);
+    assert_eq!(new_amount, 1000);
+
+    // Verify 2 new events:
+    // 1. FundsAdded struct event
+    // 2. SavingsEvent::FundsAdded enum event
+    let events_after = env.events().all().len();
+    assert_eq!(events_after - events_before, 2);
+}
+
+#[test]
+fn test_goal_completed_emits_event() {
+    let env = Env::default();
+    let contract_id = env.register_contract(None, SavingsGoalContract);
+    let client = SavingsGoalContractClient::new(&env, &contract_id);
+    let user = Address::generate(&env);
+
+    client.init();
+    env.mock_all_auths();
+
+    // Create a goal with small target
+    let goal_id = client.create_goal(
+        &user,
+        &String::from_str(&env, "Emergency Fund"),
+        &1000,
+        &1735689600,
+    );
+
+    // Get events before adding funds
+    let events_before = env.events().all().len();
+
+    // Add funds to complete the goal
+    client.add_to_goal(&user, &goal_id, &1000);
+
+    // Verify 4 new events (2 types for added, 2 types for completion):
+    // 1. FundsAdded struct
+    // 2. GoalCompleted struct
+    // 3. SavingsEvent::FundsAdded enum
+    // 4. SavingsEvent::GoalCompleted enum
+    let events_after = env.events().all().len();
+    assert_eq!(events_after - events_before, 4);
+}
+
+#[test]
+fn test_multiple_goals_emit_separate_events() {
+    let env = Env::default();
+    let contract_id = env.register_contract(None, SavingsGoalContract);
+    let client = SavingsGoalContractClient::new(&env, &contract_id);
+    let user = Address::generate(&env);
+
+    client.init();
+    env.mock_all_auths();
+
+    // Create multiple goals
+    client.create_goal(&user, &String::from_str(&env, "Goal 1"), &1000, &1735689600);
+    client.create_goal(&user, &String::from_str(&env, "Goal 2"), &2000, &1735689600);
+    client.create_goal(&user, &String::from_str(&env, "Goal 3"), &3000, &1735689600);
+
+    // Should have 3 * 2 events = 6 events
+    let events = env.events().all();
+    assert_eq!(events.len(), 6);
 }

@@ -467,14 +467,16 @@
           "v0": {
             "topics": [
               {
-                "symbol": "bill"
+                "symbol": "Remitwise"
               },
               {
-                "vec": [
-                  {
-                    "symbol": "Created"
-                  }
-                ]
+                "u32": 1
+              },
+              {
+                "u32": 1
+              },
+              {
+                "symbol": "created"
               }
             ],
             "data": {
@@ -484,6 +486,15 @@
                 },
                 {
                   "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4"
+                },
+                {
+                  "i128": {
+                    "hi": 0,
+                    "lo": 10000
+                  }
+                },
+                {
+                  "u64": 1000000
                 }
               ]
             }
@@ -557,14 +568,16 @@
           "v0": {
             "topics": [
               {
-                "symbol": "bill"
+                "symbol": "Remitwise"
               },
               {
-                "vec": [
-                  {
-                    "symbol": "Paid"
-                  }
-                ]
+                "u32": 0
+              },
+              {
+                "u32": 2
+              },
+              {
+                "symbol": "paid"
               }
             ],
             "data": {
@@ -574,6 +587,12 @@
                 },
                 {
                   "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4"
+                },
+                {
+                  "i128": {
+                    "hi": 0,
+                    "lo": 10000
+                  }
                 }
               ]
             }

@@ -50,7 +50,7 @@ fn bench_get_total_unpaid_worst_case() {
 
     // Create gaps to simulate worst-case scan behavior in previous implementation.
     for id in (2u32..=100u32).step_by(2) {
-        client.cancel_bill(&id);
+        client.cancel_bill(&owner, &id);
     }
 
     let expected_total = 50i128 * 100i128;

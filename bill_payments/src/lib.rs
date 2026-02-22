@@ -37,6 +37,19 @@ pub struct Bill {
     pub schedule_id: Option<u32>,
 }
 
+/// Function names for selective pause (symbol_short max 9 chars)
+pub mod pause_functions {
+    use soroban_sdk::symbol_short;
+    pub const CREATE_BILL: soroban_sdk::Symbol = symbol_short!("crt_bill");
+    pub const PAY_BILL: soroban_sdk::Symbol = symbol_short!("pay_bill");
+    pub const CANCEL_BILL: soroban_sdk::Symbol = symbol_short!("can_bill");
+    pub const ARCHIVE: soroban_sdk::Symbol = symbol_short!("archive");
+    pub const RESTORE: soroban_sdk::Symbol = symbol_short!("restore");
+}
+
+const CONTRACT_VERSION: u32 = 1;
+const MAX_BATCH_SIZE: u32 = 50;
+
 #[contracterror]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
 #[repr(u32)]
@@ -46,6 +59,11 @@ pub enum Error {
     InvalidAmount = 3,
     InvalidFrequency = 4,
     Unauthorized = 5,
+    ContractPaused = 6,
+    UnauthorizedPause = 7,
+    FunctionPaused = 8,
+    BatchTooLarge = 9,
+    BatchValidationFailed = 10,
 }
 
 /// Archived bill
@@ -76,6 +94,228 @@ pub struct BillPayments;
 
 #[contractimpl]
 impl BillPayments {
+    // --- Pause & upgrade (admin-only) ---
+    fn get_pause_admin(env: &Env) -> Option<Address> {
+        env.storage().instance().get(&symbol_short!("PAUSE_ADM"))
+    }
+    fn get_global_paused(env: &Env) -> bool {
+        env.storage()
+            .instance()
+            .get(&symbol_short!("PAUSED"))
+            .unwrap_or(false)
+    }
+    fn is_function_paused(env: &Env, func: Symbol) -> bool {
+        env.storage()
+            .instance()
+            .get::<_, Map<Symbol, bool>>(&symbol_short!("PAUSED_FN"))
+            .unwrap_or_else(|| Map::new(env))
+            .get(func)
+            .unwrap_or(false)
+    }
+    fn require_not_paused(env: &Env, func: Symbol) -> Result<(), Error> {
+        if Self::get_global_paused(env) {
+            return Err(Error::ContractPaused);
+        }
+        if Self::is_function_paused(env, func) {
+            return Err(Error::FunctionPaused);
+        }
+        Ok(())
+    }
+
+    /// Set or transfer pause admin. First caller can set themselves as admin if none set.
+    pub fn set_pause_admin(env: Env, caller: Address, new_admin: Address) -> Result<(), Error> {
+        caller.require_auth();
+        let current = Self::get_pause_admin(&env);
+        match current {
+            None => {
+                if caller != new_admin {
+                    return Err(Error::UnauthorizedPause);
+                }
+            }
+            Some(admin) if admin != caller => return Err(Error::UnauthorizedPause),
+            _ => {}
+        }
+        env.storage()
+            .instance()
+            .set(&symbol_short!("PAUSE_ADM"), &new_admin);
+        Ok(())
+    }
+
+    /// Pause all state-changing functions (admin only).
+    pub fn pause(env: Env, caller: Address) -> Result<(), Error> {
+        caller.require_auth();
+        let admin = Self::get_pause_admin(&env).ok_or(Error::UnauthorizedPause)?;
+        if admin != caller {
+            return Err(Error::UnauthorizedPause);
+        }
+        env.storage()
+            .instance()
+            .set(&symbol_short!("PAUSED"), &true);
+        RemitwiseEvents::emit(
+            &env,
+            EventCategory::System,
+            EventPriority::High,
+            symbol_short!("paused"),
+            (),
+        );
+        Ok(())
+    }
+
+    /// Unpause (admin only). Fails if time-locked unpause is set and not yet reached.
+    pub fn unpause(env: Env, caller: Address) -> Result<(), Error> {
+        caller.require_auth();
+        let admin = Self::get_pause_admin(&env).ok_or(Error::UnauthorizedPause)?;
+        if admin != caller {
+            return Err(Error::UnauthorizedPause);
+        }
+        let unpause_at: Option<u64> = env.storage().instance().get(&symbol_short!("UNP_AT"));
+        if let Some(at) = unpause_at {
+            if env.ledger().timestamp() < at {
+                return Err(Error::ContractPaused); // still time-locked
+            }
+            env.storage().instance().remove(&symbol_short!("UNP_AT"));
+        }
+        env.storage()
+            .instance()
+            .set(&symbol_short!("PAUSED"), &false);
+        RemitwiseEvents::emit(
+            &env,
+            EventCategory::System,
+            EventPriority::High,
+            symbol_short!("unpaused"),
+            (),
+        );
+        Ok(())
+    }
+
+    /// Schedule unpause at a future timestamp (time-locked unpause).
+    pub fn schedule_unpause(env: Env, caller: Address, at_timestamp: u64) -> Result<(), Error> {
+        caller.require_auth();
+        let admin = Self::get_pause_admin(&env).ok_or(Error::UnauthorizedPause)?;
+        if admin != caller {
+            return Err(Error::UnauthorizedPause);
+        }
+        if at_timestamp <= env.ledger().timestamp() {
+            return Err(Error::InvalidAmount); // reuse for invalid time
+        }
+        env.storage()
+            .instance()
+            .set(&symbol_short!("UNP_AT"), &at_timestamp);
+        Ok(())
+    }
+
+    /// Pause a specific function (admin only).
+    pub fn pause_function(env: Env, caller: Address, func: Symbol) -> Result<(), Error> {
+        caller.require_auth();
+        let admin = Self::get_pause_admin(&env).ok_or(Error::UnauthorizedPause)?;
+        if admin != caller {
+            return Err(Error::UnauthorizedPause);
+        }
+        let mut m: Map<Symbol, bool> = env
+            .storage()
+            .instance()
+            .get(&symbol_short!("PAUSED_FN"))
+            .unwrap_or_else(|| Map::new(&env));
+        m.set(func, true);
+        env.storage()
+            .instance()
+            .set(&symbol_short!("PAUSED_FN"), &m);
+        Ok(())
+    }
+
+    /// Unpause a specific function (admin only).
+    pub fn unpause_function(env: Env, caller: Address, func: Symbol) -> Result<(), Error> {
+        caller.require_auth();
+        let admin = Self::get_pause_admin(&env).ok_or(Error::UnauthorizedPause)?;
+        if admin != caller {
+            return Err(Error::UnauthorizedPause);
+        }
+        let mut m: Map<Symbol, bool> = env
+            .storage()
+            .instance()
+            .get(&symbol_short!("PAUSED_FN"))
+            .unwrap_or_else(|| Map::new(&env));
+        m.set(func, false);
+        env.storage()
+            .instance()
+            .set(&symbol_short!("PAUSED_FN"), &m);
+        Ok(())
+    }
+
+    /// Emergency pause: pause global and all tracked functions (admin only).
+    pub fn emergency_pause_all(env: Env, caller: Address) -> Result<(), Error> {
+        Self::pause(env.clone(), caller.clone())?;
+        for func in [
+            pause_functions::CREATE_BILL,
+            pause_functions::PAY_BILL,
+            pause_functions::CANCEL_BILL,
+            pause_functions::ARCHIVE,
+            pause_functions::RESTORE,
+        ] {
+            let _ = Self::pause_function(env.clone(), caller.clone(), func);
+        }
+        Ok(())
+    }
+
+    pub fn is_paused(env: Env) -> bool {
+        Self::get_global_paused(&env)
+    }
+    pub fn is_function_paused_public(env: Env, func: Symbol) -> bool {
+        Self::is_function_paused(&env, func)
+    }
+    pub fn get_pause_admin_public(env: Env) -> Option<Address> {
+        Self::get_pause_admin(&env)
+    }
+
+    /// Contract version for upgrade tracking.
+    pub fn get_version(env: Env) -> u32 {
+        env.storage()
+            .instance()
+            .get(&symbol_short!("VERSION"))
+            .unwrap_or(CONTRACT_VERSION)
+    }
+    fn get_upgrade_admin(env: &Env) -> Option<Address> {
+        env.storage().instance().get(&symbol_short!("UPG_ADM"))
+    }
+    /// Set upgrade admin (only current upgrade_admin or first setter if none).
+    pub fn set_upgrade_admin(env: Env, caller: Address, new_admin: Address) -> Result<(), Error> {
+        caller.require_auth();
+        let current = Self::get_upgrade_admin(&env);
+        match current {
+            None => {
+                if caller != new_admin {
+                    return Err(Error::Unauthorized);
+                }
+            }
+            Some(adm) if adm != caller => return Err(Error::Unauthorized),
+            _ => {}
+        }
+        env.storage()
+            .instance()
+            .set(&symbol_short!("UPG_ADM"), &new_admin);
+        Ok(())
+    }
+    /// Set new version (upgrade_admin only). Emits upgrade event.
+    pub fn set_version(env: Env, caller: Address, new_version: u32) -> Result<(), Error> {
+        caller.require_auth();
+        let admin = Self::get_upgrade_admin(&env).ok_or(Error::Unauthorized)?;
+        if admin != caller {
+            return Err(Error::Unauthorized);
+        }
+        let prev = Self::get_version(env.clone());
+        env.storage()
+            .instance()
+            .set(&symbol_short!("VERSION"), &new_version);
+        RemitwiseEvents::emit(
+            &env,
+            EventCategory::System,
+            EventPriority::High,
+            symbol_short!("upgraded"),
+            (prev, new_version),
+        );
+        Ok(())
+    }
+
     /// Create a new bill
     pub fn create_bill(
         env: Env,
@@ -87,6 +327,7 @@ impl BillPayments {
         frequency_days: u32,
     ) -> Result<u32, Error> {
         owner.require_auth();
+        Self::require_not_paused(&env, pause_functions::CREATE_BILL)?;
 
         if amount <= 0 {
             return Err(Error::InvalidAmount);
@@ -149,6 +390,7 @@ impl BillPayments {
     /// Mark a bill as paid
     pub fn pay_bill(env: Env, caller: Address, bill_id: u32) -> Result<(), Error> {
         caller.require_auth();
+        Self::require_not_paused(&env, pause_functions::PAY_BILL)?;
 
         Self::extend_instance_ttl(&env);
         let mut bills: Map<u32, Bill> = env
@@ -273,14 +515,17 @@ impl BillPayments {
         total
     }
 
-    pub fn cancel_bill(env: Env, bill_id: u32) -> Result<(), Error> {
+    pub fn cancel_bill(env: Env, caller: Address, bill_id: u32) -> Result<(), Error> {
+        caller.require_auth();
+        Self::require_not_paused(&env, pause_functions::CANCEL_BILL)?;
         let mut bills: Map<u32, Bill> = env
             .storage()
             .instance()
             .get(&symbol_short!("BILLS"))
             .unwrap_or_else(|| Map::new(&env));
-        if bills.get(bill_id).is_none() {
-            return Err(Error::BillNotFound);
+        let bill = bills.get(bill_id).ok_or(Error::BillNotFound)?;
+        if bill.owner != caller {
+            return Err(Error::Unauthorized);
         }
         bills.remove(bill_id);
         env.storage()
@@ -310,8 +555,13 @@ impl BillPayments {
         result
     }
 
-    pub fn archive_paid_bills(env: Env, caller: Address, before_timestamp: u64) -> u32 {
+    pub fn archive_paid_bills(
+        env: Env,
+        caller: Address,
+        before_timestamp: u64,
+    ) -> Result<u32, Error> {
         caller.require_auth();
+        Self::require_not_paused(&env, pause_functions::ARCHIVE)?;
         Self::extend_instance_ttl(&env);
 
         let mut bills: Map<u32, Bill> = env
@@ -368,7 +618,7 @@ impl BillPayments {
             archived_count,
         );
 
-        archived_count
+        Ok(archived_count)
     }
 
     pub fn get_archived_bills(env: Env, owner: Address) -> Vec<ArchivedBill> {
@@ -397,6 +647,7 @@ impl BillPayments {
 
     pub fn restore_bill(env: Env, caller: Address, bill_id: u32) -> Result<(), Error> {
         caller.require_auth();
+        Self::require_not_paused(&env, pause_functions::RESTORE)?;
         Self::extend_instance_ttl(&env);
 
         let mut archived: Map<u32, ArchivedBill> = env
@@ -452,8 +703,13 @@ impl BillPayments {
         Ok(())
     }
 
-    pub fn bulk_cleanup_bills(env: Env, caller: Address, before_timestamp: u64) -> u32 {
+    pub fn bulk_cleanup_bills(
+        env: Env,
+        caller: Address,
+        before_timestamp: u64,
+    ) -> Result<u32, Error> {
         caller.require_auth();
+        Self::require_not_paused(&env, pause_functions::ARCHIVE)?;
         Self::extend_instance_ttl(&env);
 
         let mut archived: Map<u32, ArchivedBill> = env
@@ -486,7 +742,95 @@ impl BillPayments {
             symbol_short!("cleaned"),
             deleted_count,
         );
-        deleted_count
+        Ok(deleted_count)
+    }
+
+    /// Batch pay multiple bills (atomic: all or nothing). Caller must be owner of all bills.
+    pub fn batch_pay_bills(env: Env, caller: Address, bill_ids: Vec<u32>) -> Result<u32, Error> {
+        caller.require_auth();
+        Self::require_not_paused(&env, pause_functions::PAY_BILL)?;
+        if bill_ids.len() as u32 > MAX_BATCH_SIZE {
+            return Err(Error::BatchTooLarge);
+        }
+        // Validate all up front
+        let bills_map: Map<u32, Bill> = env
+            .storage()
+            .instance()
+            .get(&symbol_short!("BILLS"))
+            .unwrap_or_else(|| Map::new(&env));
+        for id in bill_ids.iter() {
+            let bill = bills_map.get(id).ok_or(Error::BillNotFound)?;
+            if bill.owner != caller {
+                return Err(Error::Unauthorized);
+            }
+            if bill.paid {
+                return Err(Error::BillAlreadyPaid);
+            }
+        }
+        Self::extend_instance_ttl(&env);
+        let mut bills: Map<u32, Bill> = env
+            .storage()
+            .instance()
+            .get(&symbol_short!("BILLS"))
+            .unwrap_or_else(|| Map::new(&env));
+        let current_time = env.ledger().timestamp();
+        let mut next_id: u32 = env
+            .storage()
+            .instance()
+            .get(&symbol_short!("NEXT_ID"))
+            .unwrap_or(0u32);
+        let mut paid_count = 0u32;
+        for id in bill_ids.iter() {
+            let mut bill = bills.get(id).ok_or(Error::BillNotFound)?;
+            if bill.owner != caller || bill.paid {
+                return Err(Error::BatchValidationFailed);
+            }
+            let amount = bill.amount;
+            bill.paid = true;
+            bill.paid_at = Some(current_time);
+            if bill.recurring {
+                next_id = next_id.saturating_add(1);
+                let next_due_date = bill.due_date + (bill.frequency_days as u64 * 86400);
+                let next_bill = Bill {
+                    id: next_id,
+                    owner: bill.owner.clone(),
+                    name: bill.name.clone(),
+                    amount: bill.amount,
+                    due_date: next_due_date,
+                    recurring: true,
+                    frequency_days: bill.frequency_days,
+                    paid: false,
+                    created_at: current_time,
+                    paid_at: None,
+                    schedule_id: bill.schedule_id,
+                };
+                bills.set(next_id, next_bill);
+            }
+            bills.set(id, bill);
+            paid_count += 1;
+            RemitwiseEvents::emit(
+                &env,
+                EventCategory::Transaction,
+                EventPriority::High,
+                symbol_short!("paid"),
+                (id, caller.clone(), amount),
+            );
+        }
+        env.storage()
+            .instance()
+            .set(&symbol_short!("NEXT_ID"), &next_id);
+        env.storage()
+            .instance()
+            .set(&symbol_short!("BILLS"), &bills);
+        Self::update_storage_stats(&env);
+        RemitwiseEvents::emit(
+            &env,
+            EventCategory::System,
+            EventPriority::Medium,
+            symbol_short!("batch_pay"),
+            (paid_count, caller),
+        );
+        Ok(paid_count)
     }
 
     pub fn get_storage_stats(env: Env) -> StorageStats {

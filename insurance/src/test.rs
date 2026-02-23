@@ -482,3 +482,112 @@ fn test_get_premium_schedules() {
     let schedules = client.get_premium_schedules(&owner);
     assert_eq!(schedules.len(), 2);
 }
+
+#[test]
+fn test_create_policy_emits_event() {
+    use soroban_sdk::testutils::Events;
+    use soroban_sdk::{symbol_short, vec, IntoVal};
+
+    let env = Env::default();
+    let contract_id = env.register_contract(None, Insurance);
+    let client = InsuranceClient::new(&env, &contract_id);
+    let owner = Address::generate(&env);
+
+    env.mock_all_auths();
+
+    let name = String::from_str(&env, "Health Policy");
+    let coverage_type = String::from_str(&env, "Health");
+
+    let policy_id = client.create_policy(&owner, &name, &coverage_type, &100, &10000);
+
+    let events = env.events().all();
+    assert!(events.len() >= 2);
+
+    let audit_event = events.last().unwrap();
+
+    let expected_topics = vec![
+        &env,
+        symbol_short!("insure").into_val(&env),
+        InsuranceEvent::PolicyCreated.into_val(&env),
+    ];
+
+    assert_eq!(audit_event.1, expected_topics);
+
+    let data: (u32, Address) = soroban_sdk::FromVal::from_val(&env, &audit_event.2);
+    assert_eq!(data, (policy_id, owner.clone()));
+    assert_eq!(audit_event.0, contract_id.clone());
+}
+
+#[test]
+fn test_pay_premium_emits_event() {
+    use soroban_sdk::testutils::Events;
+    use soroban_sdk::{symbol_short, vec, IntoVal};
+
+    let env = Env::default();
+    let contract_id = env.register_contract(None, Insurance);
+    let client = InsuranceClient::new(&env, &contract_id);
+    let owner = Address::generate(&env);
+
+    env.mock_all_auths();
+
+    let name = String::from_str(&env, "Health Policy");
+    let coverage_type = String::from_str(&env, "Health");
+    let policy_id = client.create_policy(&owner, &name, &coverage_type, &100, &10000);
+
+    env.mock_all_auths();
+    client.pay_premium(&owner, &policy_id);
+
+    let events = env.events().all();
+    assert!(events.len() >= 2);
+
+    let audit_event = events.last().unwrap();
+
+    let expected_topics = vec![
+        &env,
+        symbol_short!("insure").into_val(&env),
+        InsuranceEvent::PremiumPaid.into_val(&env),
+    ];
+
+    assert_eq!(audit_event.1, expected_topics);
+
+    let data: (u32, Address) = soroban_sdk::FromVal::from_val(&env, &audit_event.2);
+    assert_eq!(data, (policy_id, owner.clone()));
+    assert_eq!(audit_event.0, contract_id.clone());
+}
+
+#[test]
+fn test_deactivate_policy_emits_event() {
+    use soroban_sdk::testutils::Events;
+    use soroban_sdk::{symbol_short, vec, IntoVal};
+
+    let env = Env::default();
+    let contract_id = env.register_contract(None, Insurance);
+    let client = InsuranceClient::new(&env, &contract_id);
+    let owner = Address::generate(&env);
+
+    env.mock_all_auths();
+
+    let name = String::from_str(&env, "Health Policy");
+    let coverage_type = String::from_str(&env, "Health");
+    let policy_id = client.create_policy(&owner, &name, &coverage_type, &100, &10000);
+
+    env.mock_all_auths();
+    client.deactivate_policy(&owner, &policy_id);
+
+    let events = env.events().all();
+    assert!(events.len() >= 2);
+
+    let audit_event = events.last().unwrap();
+
+    let expected_topics = vec![
+        &env,
+        symbol_short!("insuranc").into_val(&env), // Note: contract says symbol_short!("insuranc")
+        InsuranceEvent::PolicyDeactivated.into_val(&env),
+    ];
+
+    assert_eq!(audit_event.1, expected_topics);
+
+    let data: (u32, Address) = soroban_sdk::FromVal::from_val(&env, &audit_event.2);
+    assert_eq!(data, (policy_id, owner.clone()));
+    assert_eq!(audit_event.0, contract_id.clone());
+}

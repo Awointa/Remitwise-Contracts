@@ -339,6 +339,49 @@ mod testsuit {
     }
 
     #[test]
+    fn test_cancel_bill_owner_succeeds() {
+        let env = Env::default();
+        let contract_id = env.register_contract(None, BillPayments);
+        let client = BillPaymentsClient::new(&env, &contract_id);
+        let owner = <soroban_sdk::Address as AddressTrait>::generate(&env);
+        env.mock_all_auths();
+        let bill_id = client.create_bill(
+            &owner,
+            &String::from_str(&env, "Test"),
+            &100,
+            &1000000,
+            &false,
+            &0,
+        );
+        env.mock_all_auths();
+        client.cancel_bill(&owner, &bill_id);
+        let bill = client.get_bill(&bill_id);
+        assert!(bill.is_none());
+    }
+
+    #[test]
+    fn test_cancel_bill_unauthorized_fails() {
+        let env = Env::default();
+        let contract_id = env.register_contract(None, BillPayments);
+        let client = BillPaymentsClient::new(&env, &contract_id);
+        let owner = <soroban_sdk::Address as AddressTrait>::generate(&env);
+        let other = <soroban_sdk::Address as AddressTrait>::generate(&env);
+
+        env.mock_all_auths();
+        let bill_id = client.create_bill(
+            &owner,
+            &String::from_str(&env, "Water"),
+            &500,
+            &1000000,
+            &false,
+            &0,
+        );
+
+        let result = client.try_cancel_bill(&other, &bill_id);
+        assert_eq!(result, Err(Ok(Error::Unauthorized)));
+    }
+
+    #[test]
     fn test_cancel_nonexistent_bill() {
         let env = Env::default();
         let contract_id = env.register_contract(None, BillPayments);

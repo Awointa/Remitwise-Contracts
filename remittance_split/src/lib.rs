@@ -1,5 +1,6 @@
 #![no_std]
 #![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used))]
+#[cfg(test)]
 mod test;
 // test module declared above
 
@@ -966,8 +967,7 @@ impl RemittanceSplit {
 }
 
 #[cfg(test)]
-mod test;
-mod test {
+mod test_inline {
     use super::*;
     use soroban_sdk::testutils::storage::Instance as _;
     use soroban_sdk::testutils::{Address as _, Events, Ledger, LedgerInfo};

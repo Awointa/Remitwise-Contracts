@@ -12,5 +12,3 @@ soroban-sdk = "=21.7.7"
 [dev-dependencies]
 soroban-sdk = { version = "=21.7.7", features = ["testutils"] }
 testutils = { path = "../testutils" }
-
-

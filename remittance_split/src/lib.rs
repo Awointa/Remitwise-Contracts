@@ -100,11 +100,21 @@ pub enum SplitEvent {
     DistributionCompleted,
 }
 
-/// Snapshot for data export/import (migration). Checksum is a simple numeric digest for on-chain verification.
+/// Snapshot for data export/import (migration).
+///
+/// # Schema Version Tag
+/// `schema_version` carries the explicit snapshot format version.
+/// Importers **must** validate this field against the supported range
+/// (`MIN_SUPPORTED_SCHEMA_VERSION..=SCHEMA_VERSION`) before applying the
+/// snapshot. Snapshots with an unknown future version must be rejected to
+/// guarantee forward/backward compatibility.
+/// `checksum` is a simple numeric digest for on-chain integrity verification.
 #[contracttype]
 #[derive(Clone)]
 pub struct ExportSnapshot {
-    pub version: u32,
+    /// Explicit schema version tag for this snapshot format.
+    /// Supported range: MIN_SUPPORTED_SCHEMA_VERSION..=SCHEMA_VERSION.
+    pub schema_version: u32,
     pub checksum: u64,
     pub config: SplitConfig,
 }
@@ -146,7 +156,10 @@ pub enum ScheduleEvent {
     Cancelled,
 }
 
-const SNAPSHOT_VERSION: u32 = 1;
+/// Current snapshot schema version. Bump this when the ExportSnapshot format changes.
+const SCHEMA_VERSION: u32 = 1;
+/// Oldest snapshot schema version this contract can import. Enables backward compat.
+const MIN_SUPPORTED_SCHEMA_VERSION: u32 = 1;
 const MAX_AUDIT_ENTRIES: u32 = 100;
 const CONTRACT_VERSION: u32 = 1;
 
@@ -701,9 +714,13 @@ impl RemittanceSplit {
         if config.owner != caller {
             return Err(RemittanceSplitError::Unauthorized);
         }
-        let checksum = Self::compute_checksum(SNAPSHOT_VERSION, &config);
+        let checksum = Self::compute_checksum(SCHEMA_VERSION, &config);
+        env.events().publish(
+            (symbol_short!("split"), symbol_short!("snap_exp")),
+            SCHEMA_VERSION,
+        );
         Ok(Some(ExportSnapshot {
-            version: SNAPSHOT_VERSION,
+            schema_version: SCHEMA_VERSION,
             checksum,
             config,
         }))
@@ -718,11 +735,14 @@ impl RemittanceSplit {
         caller.require_auth();
         Self::require_nonce(&env, &caller, nonce)?;
 
-        if snapshot.version != SNAPSHOT_VERSION {
+        // Accept any schema_version within the supported range for backward/forward compat.
+        if snapshot.schema_version < MIN_SUPPORTED_SCHEMA_VERSION
+            || snapshot.schema_version > SCHEMA_VERSION
+        {
             Self::append_audit(&env, symbol_short!("import"), &caller, false);
             return Err(RemittanceSplitError::UnsupportedVersion);
         }
-        let expected = Self::compute_checksum(snapshot.version, &snapshot.config);
+        let expected = Self::compute_checksum(snapshot.schema_version, &snapshot.config);
         if snapshot.checksum != expected {
             Self::append_audit(&env, symbol_short!("import"), &caller, false);
             return Err(RemittanceSplitError::ChecksumMismatch);

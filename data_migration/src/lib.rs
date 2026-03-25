@@ -456,4 +456,305 @@ mod tests {
         let MigrationEvent::V1(v1) = loaded;
         assert_eq!(v1.version, SCHEMA_VERSION);
     }
+
+    // =========================================================================
+    // Malformed JSON parser tests
+    // =========================================================================
+
+    /// Empty bytes are not valid JSON and must not panic.
+    #[test]
+    fn test_import_json_empty_bytes_fails() {
+        let result = import_from_json(b"");
+        assert!(
+            matches!(result, Err(MigrationError::DeserializeError(_))),
+            "empty bytes must return DeserializeError"
+        );
+    }
+
+    /// Completely invalid JSON (random bytes) must return DeserializeError.
+    #[test]
+    fn test_import_json_random_bytes_fails() {
+        let result = import_from_json(b"\xff\xfe\x00\x01garbage");
+        assert!(
+            matches!(result, Err(MigrationError::DeserializeError(_))),
+            "random bytes must return DeserializeError"
+        );
+    }
+
+    /// Truncated JSON (cut mid-object) must return DeserializeError.
+    #[test]
+    fn test_import_json_truncated_fails() {
+        let result = import_from_json(b"{\"header\":{\"version\":1");
+        assert!(
+            matches!(result, Err(MigrationError::DeserializeError(_))),
+            "truncated JSON must return DeserializeError"
+        );
+    }
+
+    /// Valid JSON structure but wrong schema (missing required fields) must fail.
+    #[test]
+    fn test_import_json_schema_mismatch_fails() {
+        // Valid JSON but not an ExportSnapshot shape.
+        let result = import_from_json(b"{\"foo\":\"bar\",\"baz\":42}");
+        assert!(
+            matches!(result, Err(MigrationError::DeserializeError(_))),
+            "schema mismatch must return DeserializeError"
+        );
+    }
+
+    /// JSON with correct structure but incompatible version must return IncompatibleVersion.
+    #[test]
+    fn test_import_json_incompatible_version_fails() {
+        let payload = SnapshotPayload::RemittanceSplit(RemittanceSplitExport {
+            owner: "GVER".into(),
+            spending_percent: 50,
+            savings_percent: 30,
+            bills_percent: 15,
+            insurance_percent: 5,
+        });
+        let mut snapshot = ExportSnapshot::new(payload, ExportFormat::Json);
+        // Force an unsupported version.
+        snapshot.header.version = 0;
+        // Recompute checksum so only version triggers the error.
+        snapshot.header.checksum = snapshot.compute_checksum();
+
+        let bytes = export_to_json(&snapshot).unwrap();
+        let result = import_from_json(&bytes);
+        assert!(
+            matches!(result, Err(MigrationError::IncompatibleVersion { .. })),
+            "version 0 must return IncompatibleVersion"
+        );
+    }
+
+    /// JSON with a future (unsupported) version must return IncompatibleVersion.
+    #[test]
+    fn test_import_json_future_version_fails() {
+        let payload = SnapshotPayload::RemittanceSplit(RemittanceSplitExport {
+            owner: "GFUT".into(),
+            spending_percent: 25,
+            savings_percent: 25,
+            bills_percent: 25,
+            insurance_percent: 25,
+        });
+        let mut snapshot = ExportSnapshot::new(payload, ExportFormat::Json);
+        snapshot.header.version = SCHEMA_VERSION + 99;
+        snapshot.header.checksum = snapshot.compute_checksum();
+
+        let bytes = export_to_json(&snapshot).unwrap();
+        let result = import_from_json(&bytes);
+        assert!(
+            matches!(result, Err(MigrationError::IncompatibleVersion { .. })),
+            "future version must return IncompatibleVersion"
+        );
+    }
+
+    /// JSON with tampered checksum must return ChecksumMismatch.
+    #[test]
+    fn test_import_json_tampered_checksum_fails() {
+        let payload = SnapshotPayload::RemittanceSplit(RemittanceSplitExport {
+            owner: "GTMP".into(),
+            spending_percent: 10,
+            savings_percent: 10,
+            bills_percent: 10,
+            insurance_percent: 70,
+        });
+        let mut snapshot = ExportSnapshot::new(payload, ExportFormat::Json);
+        snapshot.header.checksum = "0".repeat(64); // valid hex length but wrong value
+
+        let bytes = export_to_json(&snapshot).unwrap();
+        let result = import_from_json(&bytes);
+        assert!(
+            matches!(result, Err(MigrationError::ChecksumMismatch)),
+            "tampered checksum must return ChecksumMismatch"
+        );
+    }
+
+    /// JSON with null bytes embedded must not panic and must fail gracefully.
+    #[test]
+    fn test_import_json_null_bytes_fails() {
+        let result = import_from_json(b"\x00\x00\x00");
+        assert!(
+            matches!(result, Err(MigrationError::DeserializeError(_))),
+            "null bytes must return DeserializeError"
+        );
+    }
+
+    /// JSON array instead of object must fail gracefully.
+    #[test]
+    fn test_import_json_array_root_fails() {
+        let result = import_from_json(b"[1,2,3]");
+        assert!(
+            matches!(result, Err(MigrationError::DeserializeError(_))),
+            "JSON array root must return DeserializeError"
+        );
+    }
+
+    // =========================================================================
+    // Malformed binary (bincode) snapshot parser tests
+    // =========================================================================
+
+    /// Empty bytes are not valid bincode and must not panic.
+    #[test]
+    fn test_import_binary_empty_bytes_fails() {
+        let result = import_from_binary(b"");
+        assert!(
+            matches!(result, Err(MigrationError::DeserializeError(_))),
+            "empty bytes must return DeserializeError"
+        );
+    }
+
+    /// Random bytes are not valid bincode and must not panic.
+    #[test]
+    fn test_import_binary_random_bytes_fails() {
+        let result = import_from_binary(b"\xde\xad\xbe\xef\x00\x01\x02\x03");
+        assert!(
+            matches!(result, Err(MigrationError::DeserializeError(_))),
+            "random bytes must return DeserializeError"
+        );
+    }
+
+    /// Truncated binary (first 4 bytes of a valid snapshot) must fail gracefully.
+    #[test]
+    fn test_import_binary_truncated_fails() {
+        let payload = SnapshotPayload::RemittanceSplit(RemittanceSplitExport {
+            owner: "GTRUNC".into(),
+            spending_percent: 50,
+            savings_percent: 30,
+            bills_percent: 15,
+            insurance_percent: 5,
+        });
+        let snapshot = ExportSnapshot::new(payload, ExportFormat::Binary);
+        let full_bytes = export_to_binary(&snapshot).unwrap();
+
+        // Keep only the first 4 bytes — definitely truncated.
+        let truncated = &full_bytes[..4.min(full_bytes.len())];
+        let result = import_from_binary(truncated);
+        assert!(
+            matches!(result, Err(MigrationError::DeserializeError(_))),
+            "truncated binary must return DeserializeError"
+        );
+    }
+
+    /// Binary with a single bit flip in the payload must fail checksum validation.
+    #[test]
+    fn test_import_binary_bit_flip_fails() {
+        let payload = SnapshotPayload::RemittanceSplit(RemittanceSplitExport {
+            owner: "GFLIP".into(),
+            spending_percent: 50,
+            savings_percent: 30,
+            bills_percent: 15,
+            insurance_percent: 5,
+        });
+        let snapshot = ExportSnapshot::new(payload, ExportFormat::Binary);
+        let mut bytes = export_to_binary(&snapshot).unwrap();
+
+        // Flip a bit near the end of the payload (avoid the header length prefix).
+        let last = bytes.len() - 1;
+        bytes[last] ^= 0x01;
+
+        // Either deserialization fails or checksum mismatch — both are acceptable.
+        let result = import_from_binary(&bytes);
+        assert!(
+            result.is_err(),
+            "bit-flipped binary must fail (deserialize or checksum)"
+        );
+    }
+
+    /// Binary snapshot with incompatible version must return IncompatibleVersion.
+    #[test]
+    fn test_import_binary_incompatible_version_fails() {
+        let payload = SnapshotPayload::RemittanceSplit(RemittanceSplitExport {
+            owner: "GBVER".into(),
+            spending_percent: 25,
+            savings_percent: 25,
+            bills_percent: 25,
+            insurance_percent: 25,
+        });
+        let mut snapshot = ExportSnapshot::new(payload, ExportFormat::Binary);
+        snapshot.header.version = 0;
+        snapshot.header.checksum = snapshot.compute_checksum();
+
+        let bytes = export_to_binary(&snapshot).unwrap();
+        let result = import_from_binary(&bytes);
+        assert!(
+            matches!(result, Err(MigrationError::IncompatibleVersion { .. })),
+            "version 0 binary must return IncompatibleVersion"
+        );
+    }
+
+    /// Binary snapshot with tampered checksum must return ChecksumMismatch.
+    #[test]
+    fn test_import_binary_tampered_checksum_fails() {
+        let payload = SnapshotPayload::RemittanceSplit(RemittanceSplitExport {
+            owner: "GBTMP".into(),
+            spending_percent: 10,
+            savings_percent: 10,
+            bills_percent: 10,
+            insurance_percent: 70,
+        });
+        let mut snapshot = ExportSnapshot::new(payload, ExportFormat::Binary);
+        snapshot.header.checksum = "a".repeat(64);
+
+        let bytes = export_to_binary(&snapshot).unwrap();
+        let result = import_from_binary(&bytes);
+        assert!(
+            matches!(result, Err(MigrationError::ChecksumMismatch)),
+            "tampered binary checksum must return ChecksumMismatch"
+        );
+    }
+
+    /// All-zero bytes must not panic.
+    #[test]
+    fn test_import_binary_all_zeros_fails() {
+        let zeros = vec![0u8; 64];
+        let result = import_from_binary(&zeros);
+        assert!(
+            result.is_err(),
+            "all-zero bytes must fail without panicking"
+        );
+    }
+
+    // =========================================================================
+    // Cross-format confusion tests
+    // =========================================================================
+
+    /// Feeding JSON bytes to the binary importer must fail gracefully.
+    #[test]
+    fn test_import_binary_with_json_bytes_fails() {
+        let payload = SnapshotPayload::RemittanceSplit(RemittanceSplitExport {
+            owner: "GCROSS".into(),
+            spending_percent: 50,
+            savings_percent: 30,
+            bills_percent: 15,
+            insurance_percent: 5,
+        });
+        let snapshot = ExportSnapshot::new(payload, ExportFormat::Json);
+        let json_bytes = export_to_json(&snapshot).unwrap();
+
+        let result = import_from_binary(&json_bytes);
+        assert!(
+            result.is_err(),
+            "JSON bytes fed to binary importer must fail"
+        );
+    }
+
+    /// Feeding binary bytes to the JSON importer must fail gracefully.
+    #[test]
+    fn test_import_json_with_binary_bytes_fails() {
+        let payload = SnapshotPayload::RemittanceSplit(RemittanceSplitExport {
+            owner: "GCROSS2".into(),
+            spending_percent: 50,
+            savings_percent: 30,
+            bills_percent: 15,
+            insurance_percent: 5,
+        });
+        let snapshot = ExportSnapshot::new(payload, ExportFormat::Binary);
+        let binary_bytes = export_to_binary(&snapshot).unwrap();
+
+        let result = import_from_json(&binary_bytes);
+        assert!(
+            result.is_err(),
+            "binary bytes fed to JSON importer must fail"
+        );
+    }
 }

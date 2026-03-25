@@ -410,6 +410,11 @@ impl FamilyWallet {
             None => return false,
         };
 
+        // Expired roles are treated as having no permissions.
+        if Self::role_has_expired(&env, &member.address) {
+            return false;
+        }
+
         // Owner and Admin are never restricted
         if member.role == FamilyRole::Owner || member.role == FamilyRole::Admin {
             return true;
@@ -440,7 +445,7 @@ impl FamilyWallet {
             .get(&symbol_short!("MEMBERS"))
             .unwrap_or_else(|| panic!("Wallet not initialized"));
 
-        if !Self::is_owner_or_admin_in_members(&members, &caller) {
+        if !Self::is_owner_or_admin_in_members(&env, &members, &caller) {
             panic!("Only Owner or Admin can configure multi-sig");
         }
 
@@ -882,6 +887,9 @@ impl FamilyWallet {
             .get(&symbol_short!("OWNER"))
             .unwrap_or_else(|| panic!("Wallet not initialized"));
 
+        if Self::role_has_expired(&env, &caller) {
+            panic!("Role has expired");
+        }
         if caller != owner {
             panic!("Only Owner can remove family members");
         }
@@ -1095,6 +1103,11 @@ impl FamilyWallet {
             })
     }
 
+    /// @notice Set or clear a role-expiry timestamp for an existing family member.
+    /// @dev Expiry is inclusive: at `ledger.timestamp() >= expires_at` the member is treated as expired.
+    /// @param caller Admin/Owner authorizing the change.
+    /// @param member Target family member.
+    /// @param expires_at Unix timestamp in seconds; `None` clears expiry.
     pub fn set_role_expiry(
         env: Env,
         caller: Address,
@@ -1105,6 +1118,16 @@ impl FamilyWallet {
         Self::require_role_at_least(&env, &caller, FamilyRole::Admin);
         Self::require_not_paused(&env);
         Self::extend_instance_ttl(&env);
+
+        let members: Map<Address, FamilyMember> = env
+            .storage()
+            .instance()
+            .get(&symbol_short!("MEMBERS"))
+            .unwrap_or_else(|| panic!("Wallet not initialized"));
+        if members.get(member.clone()).is_none() {
+            panic!("Member not found");
+        }
+
         let mut m: Map<Address, u64> = env
             .storage()
             .instance()
@@ -1155,6 +1178,9 @@ impl FamilyWallet {
         });
         if admin != caller {
             panic!("Only pause admin can unpause");
+        }
+        if Self::role_has_expired(&env, &caller) {
+            panic!("Role has expired");
         }
         env.storage()
             .instance()
@@ -1242,6 +1268,9 @@ impl FamilyWallet {
         });
         if admin != caller {
             panic!("Only upgrade admin can set version");
+        }
+        if Self::role_has_expired(&env, &caller) {
+            panic!("Role has expired");
         }
         let prev = Self::get_version(env.clone());
         env.storage()
@@ -1518,15 +1547,20 @@ impl FamilyWallet {
             .get(&symbol_short!("MEMBERS"))
             .unwrap_or_else(|| Map::new(env));
 
-        Self::is_owner_or_admin_in_members(&members, address)
+        Self::is_owner_or_admin_in_members(env, &members, address)
     }
 
     fn is_owner_or_admin_in_members(
+        env: &Env,
         members: &Map<Address, FamilyMember>,
         address: &Address,
     ) -> bool {
         if let Some(member) = members.get(address.clone()) {
-            matches!(member.role, FamilyRole::Owner | FamilyRole::Admin)
+            if Self::role_has_expired(env, address) {
+                false
+            } else {
+                matches!(member.role, FamilyRole::Owner | FamilyRole::Admin)
+            }
         } else {
             false
         }

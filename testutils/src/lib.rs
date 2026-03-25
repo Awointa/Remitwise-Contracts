@@ -15,7 +15,8 @@ pub fn set_ledger_time(env: &Env, sequence_number: u32, timestamp: u64) {
         base_reserve: 10,
         min_temp_entry_ttl: 1,
         min_persistent_entry_ttl: 1,
-        max_entry_ttl: 100000,
+        // Must exceed any contract bump TTL used in tests (e.g. 518,400).
+        max_entry_ttl: 3_000_000,
     });
 }
 

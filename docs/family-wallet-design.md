@@ -28,8 +28,10 @@ Lower numeric value is higher privilege.
 ### Role Expiry
 
 - Optional role expiry per member is stored in `ROLE_EXP`.
+- A role is considered expired when `ledger.timestamp() >= expires_at` (inclusive boundary).
 - Expired roles fail `require_role_at_least` checks (`"Role has expired"` panic).
-- Expiry is set/cleared via `set_role_expiry`.
+- Expired roles are also treated as **not privileged** for `Owner`/`Admin` helper checks used by permissioned methods (e.g. emergency config, cleanup, archiving).
+- Expiry is set/cleared via `set_role_expiry` and only applies to existing family members (non-members are rejected).
 
 ## Permissions Matrix
 

@@ -2612,4 +2612,29 @@ mod test {
             "Bill must be overdue one full day past due_date"
         );
     }
+
+    fn extend_ttl(env: &Env, key: &DataKey) {
+    // Extend the specific data entry
+    env.storage().persistent().extend_ttl(
+        key, 
+        PERSISTENT_LIFETIME_THRESHOLD, 
+        PERSISTENT_BUMP_AMOUNT
+    );
+}
+
+fn extend_instance_ttl(env: &Env) {
+    // Extend the contract instance itself
+    env.storage().instance().extend_ttl(
+        INSTANCE_LIFETIME_THRESHOLD, 
+        INSTANCE_BUMP_AMOUNT
+    );
+}
+}
+
+pub fn create_bill(env: Env, ...) {
+    extend_instance_ttl(&env); // Keep contract alive
+    // ... logic to create bill ...
+    let key = DataKey::Bill(bill_id);
+    env.storage().persistent().set(&key, &bill);
+    extend_ttl(&env, &key); // Keep this specific bill alive
 }

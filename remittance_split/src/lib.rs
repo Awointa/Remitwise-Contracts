@@ -165,17 +165,17 @@ const MIN_SUPPORTED_SCHEMA_VERSION: u32 = 1;
 /// to prevent relay/replay attacks across different deployments or networks.
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct InitializationPayload {
+pub struct SplitAuthPayload {
     /// Domain identifier for functional separation (e.g. symbol_short!("init"))
-    pub domain: Symbol,
+    pub domain_id: Symbol,
     /// Network ID to prevent replay across different Stellar networks
-    pub network: BytesN<32>,
+    pub network_id: BytesN<32>,
     /// Contract address to prevent replay across different contract instances
-    pub contract: Address,
+    pub contract_addr: Address,
     /// Owner address who is authorizing the initialization
-    pub owner: Address,
+    pub owner_addr: Address,
     /// Per-address nonce for sequential replay protection
-    pub nonce: u64,
+    pub nonce_val: u64,
     /// Parameters of the initialization
     pub usdc_contract: Address,
     pub spending_percent: u32,
@@ -401,12 +401,12 @@ impl RemittanceSplit {
         bills_percent: u32,
         insurance_percent: u32,
     ) -> Result<bool, RemittanceSplitError> {
-        let payload = InitializationPayload {
-            domain: symbol_short!("init"),
-            network: env.ledger().network_id(),
-            contract: env.current_contract_address(),
-            owner: owner.clone(),
-            nonce,
+        let payload = SplitAuthPayload {
+            domain_id: symbol_short!("init"),
+            network_id: env.ledger().network_id(),
+            contract_addr: env.current_contract_address(),
+            owner_addr: owner.clone(),
+            nonce_val: nonce,
             usdc_contract: usdc_contract.clone(),
             spending_percent,
             savings_percent,

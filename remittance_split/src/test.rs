@@ -59,13 +59,13 @@ fn test_initialize_split_domain_separated_auth() {
     // The top-level invocation from mock_all_auths for require_auth_for_args
     // will have the authorized arguments.
     let payload_val = auth_invocation.args.get(0).unwrap();
-    let payload: InitializationPayload = payload_val.try_into_val(&env).unwrap();
+    let payload: SplitAuthPayload = payload_val.try_into_val(&env).unwrap();
     
-    assert_eq!(payload.domain, symbol_short!("init"));
-    assert_eq!(payload.network, env.ledger().network_id());
-    assert_eq!(payload.contract, contract_id);
-    assert_eq!(payload.owner, owner);
-    assert_eq!(payload.nonce, 0);
+    assert_eq!(payload.domain_id, symbol_short!("init"));
+    assert_eq!(payload.network_id, env.ledger().network_id());
+    assert_eq!(payload.contract_addr, contract_id);
+    assert_eq!(payload.owner_addr, owner);
+    assert_eq!(payload.nonce_val, 0);
     assert_eq!(payload.usdc_contract, token_id);
     assert_eq!(payload.spending_percent, 50);
     assert_eq!(payload.savings_percent, 30);

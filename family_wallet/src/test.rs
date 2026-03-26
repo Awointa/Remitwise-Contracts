@@ -529,8 +529,16 @@ fn test_propose_emergency_transfer() {
     let signers = vec![&env, owner.clone(), member1.clone(), member2.clone()];
     client.configure_multisig(
         &owner,
+        &TransactionType::LargeWithdrawal,
+        &3,
+        &signers,
+        &1000_0000000,
+    );
+
+    client.configure_multisig(
+        &owner,
         &TransactionType::EmergencyTransfer,
-        &2,
+        &3,
         &signers,
         &0,
     );
@@ -547,6 +555,10 @@ fn test_propose_emergency_transfer() {
     assert!(tx_id > 0);
 
     client.sign_transaction(&member1, &tx_id);
+    
+    assert!(client.get_pending_transaction(&tx_id).is_some());
+    
+    client.sign_transaction(&member2, &tx_id);
 
     assert_eq!(token_client.balance(&recipient), transfer_amount);
     assert_eq!(token_client.balance(&owner), 5000_0000000 - transfer_amount);
@@ -1205,4 +1217,442 @@ fn test_emergency_proposal_role_misuse() {
     let recipient = Address::generate(&env);
     
     client.propose_emergency_transfer(&viewer, &token_contract.address(), &recipient, &1000_0000000);
+}
+
+// ============================================================================
+// Multisig Threshold Bounds Validation Tests
+// ============================================================================
+
+#[test]
+fn test_threshold_minimum_valid() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register_contract(None, FamilyWallet);
+    let client = FamilyWalletClient::new(&env, &contract_id);
+
+    let owner = Address::generate(&env);
+    let member1 = Address::generate(&env);
+    let member2 = Address::generate(&env);
+    let initial_members = vec![&env, member1.clone(), member2.clone()];
+
+    client.init(&owner, &initial_members);
+
+    let signers = vec![&env, member1.clone(), member2.clone()];
+    client.configure_multisig(
+        &owner,
+        &TransactionType::LargeWithdrawal,
+        &1,
+        &signers,
+        &1000_0000000,
+    );
+}
+
+#[test]
+fn test_threshold_maximum_valid() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register_contract(None, FamilyWallet);
+    let client = FamilyWalletClient::new(&env, &contract_id);
+
+    let owner = Address::generate(&env);
+    let member1 = Address::generate(&env);
+    let member2 = Address::generate(&env);
+    let member3 = Address::generate(&env);
+    let member4 = Address::generate(&env);
+    let member5 = Address::generate(&env);
+    let member6 = Address::generate(&env);
+    let member7 = Address::generate(&env);
+    let member8 = Address::generate(&env);
+    let member9 = Address::generate(&env);
+    let member10 = Address::generate(&env);
+    let initial_members = vec![
+        &env,
+        member1.clone(),
+        member2.clone(),
+        member3.clone(),
+        member4.clone(),
+        member5.clone(),
+        member6.clone(),
+        member7.clone(),
+        member8.clone(),
+        member9.clone(),
+        member10.clone(),
+    ];
+
+    client.init(&owner, &initial_members);
+
+    let signers = vec![
+        &env,
+        member1.clone(), member2.clone(), member3.clone(), member4.clone(),
+        member5.clone(), member6.clone(), member7.clone(), member8.clone(),
+        member9.clone(), member10.clone(),
+    ];
+    client.configure_multisig(
+        &owner,
+        &TransactionType::LargeWithdrawal,
+        &10,
+        &signers,
+        &1000_0000000,
+    );
+}
+
+#[test]
+#[should_panic(expected = "Threshold cannot exceed")]
+fn test_threshold_above_maximum_rejected() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register_contract(None, FamilyWallet);
+    let client = FamilyWalletClient::new(&env, &contract_id);
+
+    let owner = Address::generate(&env);
+    let member1 = Address::generate(&env);
+    let member2 = Address::generate(&env);
+    let initial_members = vec![&env, member1.clone(), member2.clone()];
+
+    client.init(&owner, &initial_members);
+
+    let signers = vec![&env, member1.clone(), member2.clone()];
+    client.configure_multisig(
+        &owner,
+        &TransactionType::LargeWithdrawal,
+        &101,
+        &signers,
+        &1000_0000000,
+    );
+}
+
+#[test]
+#[should_panic(expected = "Threshold must be at least")]
+fn test_threshold_zero_rejected() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register_contract(None, FamilyWallet);
+    let client = FamilyWalletClient::new(&env, &contract_id);
+
+    let owner = Address::generate(&env);
+    let member1 = Address::generate(&env);
+    let member2 = Address::generate(&env);
+    let initial_members = vec![&env, member1.clone(), member2.clone()];
+
+    client.init(&owner, &initial_members);
+
+    let signers = vec![&env, member1.clone(), member2.clone()];
+    client.configure_multisig(
+        &owner,
+        &TransactionType::LargeWithdrawal,
+        &0,
+        &signers,
+        &1000_0000000,
+    );
+}
+
+#[test]
+#[should_panic(expected = "Threshold cannot exceed")]
+fn test_threshold_exceeds_signer_count_rejected() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register_contract(None, FamilyWallet);
+    let client = FamilyWalletClient::new(&env, &contract_id);
+
+    let owner = Address::generate(&env);
+    let member1 = Address::generate(&env);
+    let member2 = Address::generate(&env);
+    let initial_members = vec![&env, member1.clone(), member2.clone()];
+
+    client.init(&owner, &initial_members);
+
+    let signers = vec![&env, member1.clone(), member2.clone()];
+    client.configure_multisig(
+        &owner,
+        &TransactionType::LargeWithdrawal,
+        &3,
+        &signers,
+        &1000_0000000,
+    );
+}
+
+#[test]
+#[should_panic(expected = "Signers list cannot be empty")]
+fn test_empty_signers_list_rejected() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register_contract(None, FamilyWallet);
+    let client = FamilyWalletClient::new(&env, &contract_id);
+
+    let owner = Address::generate(&env);
+    let initial_members = vec![&env];
+
+    client.init(&owner, &initial_members);
+
+    let empty_signers = vec![&env];
+    client.configure_multisig(
+        &owner,
+        &TransactionType::LargeWithdrawal,
+        &1,
+        &empty_signers,
+        &1000_0000000,
+    );
+}
+
+#[test]
+#[should_panic(expected = "Signer is not a family member")]
+fn test_signer_not_family_member_rejected() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register_contract(None, FamilyWallet);
+    let client = FamilyWalletClient::new(&env, &contract_id);
+
+    let owner = Address::generate(&env);
+    let member1 = Address::generate(&env);
+    let initial_members = vec![&env, member1.clone()];
+
+    client.init(&owner, &initial_members);
+
+    let non_member = Address::generate(&env);
+    let signers = vec![&env, member1.clone(), non_member.clone()];
+    client.configure_multisig(
+        &owner,
+        &TransactionType::LargeWithdrawal,
+        &2,
+        &signers,
+        &1000_0000000,
+    );
+}
+
+#[test]
+#[should_panic(expected = "Spending limit must be non-negative")]
+fn test_negative_spending_limit_rejected() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register_contract(None, FamilyWallet);
+    let client = FamilyWalletClient::new(&env, &contract_id);
+
+    let owner = Address::generate(&env);
+    let member1 = Address::generate(&env);
+    let initial_members = vec![&env, member1.clone()];
+
+    client.init(&owner, &initial_members);
+
+    let signers = vec![&env, member1.clone()];
+    client.configure_multisig(
+        &owner,
+        &TransactionType::LargeWithdrawal,
+        &1,
+        &signers,
+        &(-100),
+    );
+}
+
+#[test]
+fn test_threshold_consistency_across_transaction_types() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register_contract(None, FamilyWallet);
+    let client = FamilyWalletClient::new(&env, &contract_id);
+
+    let owner = Address::generate(&env);
+    let member1 = Address::generate(&env);
+    let member2 = Address::generate(&env);
+    let initial_members = vec![&env, member1.clone(), member2.clone()];
+
+    client.init(&owner, &initial_members);
+
+    let all_signers = vec![&env, owner.clone(), member1.clone(), member2.clone()];
+
+    client.configure_multisig(
+        &owner,
+        &TransactionType::LargeWithdrawal,
+        &2,
+        &all_signers,
+        &1000_0000000,
+    );
+
+    client.configure_multisig(
+        &owner,
+        &TransactionType::RoleChange,
+        &3,
+        &all_signers,
+        &0,
+    );
+
+    let wd_config = client.get_multisig_config(&TransactionType::LargeWithdrawal).unwrap();
+    let role_config = client.get_multisig_config(&TransactionType::RoleChange).unwrap();
+
+    assert_eq!(wd_config.threshold, 2);
+    assert_eq!(role_config.threshold, 3);
+    assert!(role_config.threshold > wd_config.threshold);
+}
+
+#[test]
+fn test_signer_list_maximum_boundary() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register_contract(None, FamilyWallet);
+    let client = FamilyWalletClient::new(&env, &contract_id);
+
+    let owner = Address::generate(&env);
+    let m1 = Address::generate(&env);
+    let m2 = Address::generate(&env);
+    let m3 = Address::generate(&env);
+    let m4 = Address::generate(&env);
+    let m5 = Address::generate(&env);
+    let m6 = Address::generate(&env);
+    let m7 = Address::generate(&env);
+    let m8 = Address::generate(&env);
+    let m9 = Address::generate(&env);
+    let m10 = Address::generate(&env);
+    let m11 = Address::generate(&env);
+    let m12 = Address::generate(&env);
+    let m13 = Address::generate(&env);
+    let m14 = Address::generate(&env);
+    let m15 = Address::generate(&env);
+    let m16 = Address::generate(&env);
+    let m17 = Address::generate(&env);
+    let m18 = Address::generate(&env);
+    let m19 = Address::generate(&env);
+    let m20 = Address::generate(&env);
+
+    let initial_members = vec![
+        &env, m1.clone(), m2.clone(), m3.clone(), m4.clone(), m5.clone(),
+        m6.clone(), m7.clone(), m8.clone(), m9.clone(), m10.clone(),
+        m11.clone(), m12.clone(), m13.clone(), m14.clone(), m15.clone(),
+        m16.clone(), m17.clone(), m18.clone(), m19.clone(), m20.clone(),
+    ];
+
+    client.init(&owner, &initial_members);
+
+    let signers = vec![
+        &env,
+        m1.clone(), m2.clone(), m3.clone(), m4.clone(), m5.clone(),
+        m6.clone(), m7.clone(), m8.clone(), m9.clone(), m10.clone(),
+        m11.clone(), m12.clone(), m13.clone(), m14.clone(), m15.clone(),
+        m16.clone(), m17.clone(), m18.clone(), m19.clone(), m20.clone(),
+    ];
+    client.configure_multisig(
+        &owner,
+        &TransactionType::LargeWithdrawal,
+        &20,
+        &signers,
+        &0,
+    );
+}
+
+#[test]
+fn test_threshold_one_with_multiple_signers() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register_contract(None, FamilyWallet);
+    let client = FamilyWalletClient::new(&env, &contract_id);
+
+    let owner = Address::generate(&env);
+    let member1 = Address::generate(&env);
+    let member2 = Address::generate(&env);
+    let member3 = Address::generate(&env);
+    let member4 = Address::generate(&env);
+    let initial_members = vec![&env, member1.clone(), member2.clone(), member3.clone(), member4.clone()];
+
+    client.init(&owner, &initial_members);
+
+    let signers = vec![&env, owner.clone(), member1.clone(), member2.clone(), member3.clone(), member4.clone()];
+    client.configure_multisig(
+        &owner,
+        &TransactionType::LargeWithdrawal,
+        &1,
+        &signers,
+        &1000_0000000,
+    );
+
+    let token_admin = Address::generate(&env);
+    let token_contract = env.register_stellar_asset_contract_v2(token_admin.clone());
+    StellarAssetClient::new(&env, &token_contract.address()).mint(&owner, &5000_0000000);
+
+    let recipient = Address::generate(&env);
+    let tx_id = client.withdraw(
+        &owner,
+        &token_contract.address(),
+        &recipient,
+        &2000_0000000,
+    );
+
+    assert!(tx_id > 0);
+    client.sign_transaction(&member1, &tx_id);
+
+    let pending = client.get_pending_transaction(&tx_id);
+    assert!(pending.is_none());
+}
+
+#[test]
+fn test_threshold_equals_signer_count() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register_contract(None, FamilyWallet);
+    let client = FamilyWalletClient::new(&env, &contract_id);
+
+    let owner = Address::generate(&env);
+    let member1 = Address::generate(&env);
+    let member2 = Address::generate(&env);
+    let initial_members = vec![&env, member1.clone(), member2.clone()];
+
+    client.init(&owner, &initial_members);
+
+    let signers = vec![&env, owner.clone(), member1.clone(), member2.clone()];
+    client.configure_multisig(
+        &owner,
+        &TransactionType::LargeWithdrawal,
+        &3,
+        &signers,
+        &1000_0000000,
+    );
+}
+
+#[test]
+#[should_panic(expected = "Contract is paused")]
+fn test_paused_contract_rejects_multisig_config() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register_contract(None, FamilyWallet);
+    let client = FamilyWalletClient::new(&env, &contract_id);
+
+    let owner = Address::generate(&env);
+    let member1 = Address::generate(&env);
+    let initial_members = vec![&env, member1.clone()];
+
+    client.init(&owner, &initial_members);
+
+    client.pause(&owner);
+
+    let signers = vec![&env, owner.clone(), member1.clone()];
+    client.configure_multisig(
+        &owner,
+        &TransactionType::LargeWithdrawal,
+        &1,
+        &signers,
+        &0,
+    );
+}
+
+#[test]
+fn test_admin_can_configure_multisig() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register_contract(None, FamilyWallet);
+    let client = FamilyWalletClient::new(&env, &contract_id);
+
+    let owner = Address::generate(&env);
+    let admin = Address::generate(&env);
+    let member1 = Address::generate(&env);
+    let initial_members = vec![&env, member1.clone()];
+
+    client.init(&owner, &initial_members);
+    
+    client.add_family_member(&owner, &admin, &FamilyRole::Admin);
+
+    let signers = vec![&env, owner.clone(), admin.clone(), member1.clone()];
+    client.configure_multisig(
+        &admin,
+        &TransactionType::LargeWithdrawal,
+        &2,
+        &signers,
+        &1000_0000000,
+    );
 }

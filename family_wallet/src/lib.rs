@@ -137,6 +137,9 @@ pub struct AccessAuditEntry {
 const CONTRACT_VERSION: u32 = 1;
 const MAX_ACCESS_AUDIT_ENTRIES: u32 = 100;
 const MAX_BATCH_MEMBERS: u32 = 30;
+const MAX_SIGNERS: u32 = 100;
+const MIN_THRESHOLD: u32 = 1;
+const MAX_THRESHOLD: u32 = 100;
 
 #[contracttype]
 #[derive(Clone)]
@@ -172,6 +175,10 @@ pub enum Error {
     MemberNotFound = 11,
     TransactionAlreadyExecuted = 12,
     InvalidSpendingLimit = 13,
+    ThresholdBelowMinimum = 14,
+    ThresholdAboveMaximum = 15,
+    SignersListEmpty = 16,
+    SignerNotMember = 17,
 }
 
 #[contractimpl]
@@ -449,15 +456,27 @@ impl FamilyWallet {
             panic!("Only Owner or Admin can configure multi-sig");
         }
 
-        // Validate threshold
         let signer_count = signers.len();
-        if threshold == 0 || threshold > signer_count {
-            panic!("Invalid threshold");
+
+        if signer_count == 0 {
+            panic!("Signers list cannot be empty");
+        }
+
+        if threshold < MIN_THRESHOLD {
+            panic!("Threshold must be at least {}", MIN_THRESHOLD);
+        }
+
+        if threshold > MAX_THRESHOLD {
+            panic!("Threshold cannot exceed {}", MAX_THRESHOLD);
+        }
+
+        if threshold > signer_count {
+            panic!("Threshold cannot exceed number of signers");
         }
 
         for signer in signers.iter() {
             if members.get(signer.clone()).is_none() {
-                panic!("Signer must be a family member");
+                panic!("Signer is not a family member");
             }
         }
 

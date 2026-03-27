@@ -5,6 +5,7 @@ use soroban_sdk::{
     contract, contracterror, contractimpl, contracttype, symbol_short, token::TokenClient, vec,
     Address, Env, Map, Symbol, Vec,
 };
+use remitwise_common::{EventCategory, EventPriority, RemitwiseEvents};
 
 // Event topics
 const SPLIT_INITIALIZED: Symbol = symbol_short!("init");
@@ -218,8 +219,13 @@ impl RemittanceSplit {
         env.storage()
             .instance()
             .set(&symbol_short!("PAUSED"), &true);
-        env.events()
-            .publish((symbol_short!("split"), symbol_short!("paused")), ());
+        RemitwiseEvents::emit(
+            &env,
+            EventCategory::System,
+            EventPriority::High,
+            symbol_short!("paused"),
+            (),
+        );
         Ok(())
     }
     pub fn unpause(env: Env, caller: Address) -> Result<(), RemittanceSplitError> {
@@ -236,8 +242,13 @@ impl RemittanceSplit {
         env.storage()
             .instance()
             .set(&symbol_short!("PAUSED"), &false);
-        env.events()
-            .publish((symbol_short!("split"), symbol_short!("unpaused")), ());
+        RemitwiseEvents::emit(
+            &env,
+            EventCategory::System,
+            EventPriority::High,
+            symbol_short!("unpaused"),
+            (),
+        );
         Ok(())
     }
     pub fn is_paused(env: Env) -> bool {
@@ -285,7 +296,7 @@ impl RemittanceSplit {
         // Authorization logic:
         // 1. If no upgrade admin exists, only contract owner can set initial admin
         // 2. If upgrade admin exists, only current upgrade admin can transfer
-        match current_upgrade_admin {
+        match &current_upgrade_admin {
             None => {
                 // Initial admin setup - only owner can set
                 if config.owner != caller {
@@ -294,7 +305,7 @@ impl RemittanceSplit {
             }
             Some(current_admin) => {
                 // Admin transfer - only current admin can transfer
-                if current_admin != caller {
+                if *current_admin != caller {
                     return Err(RemittanceSplitError::Unauthorized);
                 }
             }
@@ -305,8 +316,11 @@ impl RemittanceSplit {
             .set(&symbol_short!("UPG_ADM"), &new_admin);
         
         // Emit admin transfer event for audit trail
-        env.events().publish(
-            (symbol_short!("split"), symbol_short!("adm_xfr")),
+        RemitwiseEvents::emit(
+            &env,
+            EventCategory::Access,
+            EventPriority::High,
+            symbol_short!("adm_xfr"),
             (current_upgrade_admin, new_admin.clone()),
         );
         
@@ -340,8 +354,11 @@ impl RemittanceSplit {
         env.storage()
             .instance()
             .set(&symbol_short!("VERSION"), &new_version);
-        env.events().publish(
-            (symbol_short!("split"), symbol_short!("upgraded")),
+        RemitwiseEvents::emit(
+            &env,
+            EventCategory::System,
+            EventPriority::High,
+            symbol_short!("upgraded"),
             (prev, new_version),
         );
         Ok(())
@@ -422,8 +439,13 @@ impl RemittanceSplit {
 
         Self::increment_nonce(&env, &owner)?;
         Self::append_audit(&env, symbol_short!("init"), &owner, true);
-        env.events()
-            .publish((symbol_short!("split"), SplitEvent::Initialized), owner);
+        RemitwiseEvents::emit(
+            &env,
+            EventCategory::State,
+            EventPriority::Medium,
+            symbol_short!("init"),
+            owner,
+        );
 
         Ok(true)
     }
@@ -486,9 +508,20 @@ impl RemittanceSplit {
             insurance_percent,
             timestamp: env.ledger().timestamp(),
         };
-        env.events().publish((SPLIT_INITIALIZED,), event);
-        env.events()
-            .publish((symbol_short!("split"), SplitEvent::Updated), caller);
+        RemitwiseEvents::emit(
+            &env,
+            EventCategory::State,
+            EventPriority::Medium,
+            symbol_short!("init"),
+            event,
+        );
+        RemitwiseEvents::emit(
+            &env,
+            EventCategory::State,
+            EventPriority::Medium,
+            symbol_short!("updated"),
+            caller.clone(),
+        );
 
         Ok(true)
     }
@@ -546,9 +579,18 @@ impl RemittanceSplit {
             insurance_amount: insurance,
             timestamp: env.ledger().timestamp(),
         };
-        env.events().publish((SPLIT_CALCULATED,), event);
-        env.events().publish(
-            (symbol_short!("split"), SplitEvent::Calculated),
+        RemitwiseEvents::emit(
+            &env,
+            EventCategory::Transaction,
+            EventPriority::Low,
+            symbol_short!("calc"),
+            event,
+        );
+        RemitwiseEvents::emit(
+            &env,
+            EventCategory::Transaction,
+            EventPriority::Low,
+            symbol_short!("calc_raw"),
             total_amount,
         );
 
@@ -657,8 +699,11 @@ impl RemittanceSplit {
         // 10. Advance nonce, record audit, emit event.
         Self::increment_nonce(&env, &from)?;
         Self::append_audit(&env, symbol_short!("distrib"), &from, true);
-        env.events().publish(
-            (symbol_short!("split"), SplitEvent::DistributionCompleted),
+        RemitwiseEvents::emit(
+            &env,
+            EventCategory::Transaction,
+            EventPriority::Medium,
+            symbol_short!("dist_ok"),
             (from, total_amount),
         );
 
@@ -715,8 +760,11 @@ impl RemittanceSplit {
             return Err(RemittanceSplitError::Unauthorized);
         }
         let checksum = Self::compute_checksum(SCHEMA_VERSION, &config);
-        env.events().publish(
-            (symbol_short!("split"), symbol_short!("snap_exp")),
+        RemitwiseEvents::emit(
+            &env,
+            EventCategory::System,
+            EventPriority::Low,
+            symbol_short!("snap_exp"),
             SCHEMA_VERSION,
         );
         Ok(Some(ExportSnapshot {
@@ -922,9 +970,18 @@ impl RemittanceSplit {
                 insurance_amount: insurance,
                 timestamp: env.ledger().timestamp(),
             };
-            env.events().publish((SPLIT_CALCULATED,), event);
-            env.events().publish(
-                (symbol_short!("split"), SplitEvent::Calculated),
+            RemitwiseEvents::emit(
+                &env,
+                EventCategory::Transaction,
+                EventPriority::Low,
+                symbol_short!("calc"),
+                event,
+            );
+            RemitwiseEvents::emit(
+                &env,
+                EventCategory::Transaction,
+                EventPriority::Low,
+                symbol_short!("calc_raw"),
                 total_amount,
             );
         }
@@ -993,8 +1050,11 @@ impl RemittanceSplit {
             .instance()
             .set(&symbol_short!("NEXT_RSCH"), &next_schedule_id);
 
-        env.events().publish(
-            (symbol_short!("schedule"), ScheduleEvent::Created),
+        RemitwiseEvents::emit(
+            &env,
+            EventCategory::State,
+            EventPriority::Medium,
+            symbol_short!("sch_new"),
             (next_schedule_id, owner),
         );
 
@@ -1046,8 +1106,11 @@ impl RemittanceSplit {
             .instance()
             .set(&symbol_short!("REM_SCH"), &schedules);
 
-        env.events().publish(
-            (symbol_short!("schedule"), ScheduleEvent::Modified),
+        RemitwiseEvents::emit(
+            &env,
+            EventCategory::State,
+            EventPriority::Medium,
+            symbol_short!("sch_mod"),
             (schedule_id, caller),
         );
 
@@ -1084,8 +1147,11 @@ impl RemittanceSplit {
             .instance()
             .set(&symbol_short!("REM_SCH"), &schedules);
 
-        env.events().publish(
-            (symbol_short!("schedule"), ScheduleEvent::Cancelled),
+        RemitwiseEvents::emit(
+            &env,
+            EventCategory::State,
+            EventPriority::Medium,
+            symbol_short!("sch_can"),
             (schedule_id, caller),
         );
 

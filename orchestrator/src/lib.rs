@@ -70,6 +70,7 @@ use soroban_sdk::{
     contract, contractclient, contracterror, contractimpl, contracttype, symbol_short, Address,
     Env, Symbol, Vec,
 };
+use remitwise_common::{EventCategory, EventPriority, RemitwiseEvents};
 
 #[cfg(test)]
 mod test;
@@ -224,7 +225,7 @@ pub enum OrchestratorError {
 /// At most one execution can be active at any time. Any attempt to enter
 /// `Executing` state while already executing returns `ReentrancyDetected`.
 #[contracttype]
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(u32)]
 pub enum ExecutionState {
     /// No execution in progress; entry points may be called
@@ -682,7 +683,13 @@ impl Orchestrator {
             timestamp,
         };
 
-        env.events().publish((symbol_short!("flow_ok"),), event);
+        RemitwiseEvents::emit(
+            &env,
+            EventCategory::Transaction,
+            EventPriority::Medium,
+            symbol_short!("flow_ok"),
+            event,
+        );
     }
 
     /// Emit error event for a failed remittance flow
@@ -710,7 +717,13 @@ impl Orchestrator {
             timestamp,
         };
 
-        env.events().publish((symbol_short!("flow_err"),), event);
+        RemitwiseEvents::emit(
+            &env,
+            EventCategory::Transaction,
+            EventPriority::High,
+            symbol_short!("flow_err"),
+            event,
+        );
     }
 
     // ============================================================================
@@ -1378,6 +1391,53 @@ impl Orchestrator {
             }
         }
         out
+    }
+
+    /// Validate all contract addresses used in a remittance flow.
+    ///
+    /// Ensures that:
+    /// 1. No address refers to the orchestrator itself (prevents self-recursion)
+    /// 2. All addresses are distinct (prevents misconfiguration)
+    ///
+    /// # Returns
+    /// Ok(()) if all addresses are valid, Err(OrchestratorError::InvalidContractAddress) otherwise.
+    fn validate_remittance_flow_addresses(
+        env: &Env,
+        family_wallet: &Address,
+        remittance_split: &Address,
+        savings: &Address,
+        bills: &Address,
+        insurance: &Address,
+    ) -> Result<(), OrchestratorError> {
+        let current = env.current_contract_address();
+
+        if family_wallet == &current
+            || remittance_split == &current
+            || savings == &current
+            || bills == &current
+            || insurance == &current
+        {
+            return Err(OrchestratorError::InvalidContractAddress);
+        }
+
+        // Distinctness check
+        let addrs = [
+            family_wallet,
+            remittance_split,
+            savings,
+            bills,
+            insurance,
+        ];
+
+        for i in 0..5 {
+            for j in (i + 1)..5 {
+                if addrs[i] == addrs[j] {
+                    return Err(OrchestratorError::InvalidContractAddress);
+                }
+            }
+        }
+
+        Ok(())
     }
 
     /// Extend the TTL of instance storage

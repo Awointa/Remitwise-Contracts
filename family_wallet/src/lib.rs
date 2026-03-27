@@ -5,7 +5,7 @@ use soroban_sdk::{
     Env, Map, Symbol, Vec,
 };
 
-use remitwise_common::FamilyRole;
+use remitwise_common::{FamilyRole, EventCategory, EventPriority, RemitwiseEvents};
 
 // Storage TTL constants for active data
 const INSTANCE_LIFETIME_THRESHOLD: u32 = 17280;
@@ -314,8 +314,11 @@ impl FamilyWallet {
             .instance()
             .set(&symbol_short!("MEMBERS"), &members);
 
-        env.events().publish(
-            (symbol_short!("added"), symbol_short!("member")),
+        RemitwiseEvents::emit(
+            &env,
+            EventCategory::Access,
+            EventPriority::High,
+            symbol_short!("member"),
             MemberAddedEvent {
                 member: member_address,
                 role,
@@ -373,8 +376,11 @@ impl FamilyWallet {
             .set(&symbol_short!("MEMBERS"), &members);
 
         let now = env.ledger().timestamp();
-        env.events().publish(
-            (symbol_short!("updated"), symbol_short!("limit")),
+        RemitwiseEvents::emit(
+            &env,
+            EventCategory::Access,
+            EventPriority::Medium,
+            symbol_short!("limit"),
             SpendingLimitUpdatedEvent {
                 member: member_address,
                 old_limit,
@@ -834,8 +840,13 @@ impl FamilyWallet {
         } else {
             EmergencyEvent::ModeOff
         };
-        env.events()
-            .publish((symbol_short!("emerg"), event), caller);
+        RemitwiseEvents::emit(
+            &env,
+            EventCategory::System,
+            EventPriority::High,
+            symbol_short!("em_mode"),
+            event,
+        );
 
         true
     }
@@ -1019,8 +1030,11 @@ impl FamilyWallet {
         Self::extend_archive_ttl(&env);
         Self::update_storage_stats(&env);
 
-        env.events().publish(
-            (symbol_short!("wallet"), ArchiveEvent::TransactionsArchived),
+        RemitwiseEvents::emit(
+            &env,
+            EventCategory::System,
+            EventPriority::Low,
+            symbol_short!("archived"),
             (archived_count, caller),
         );
 
@@ -1083,11 +1097,13 @@ impl FamilyWallet {
 
         Self::update_storage_stats(&env);
 
-        env.events().publish(
-            (symbol_short!("wallet"), ArchiveEvent::ExpiredCleaned),
+        RemitwiseEvents::emit(
+            &env,
+            EventCategory::System,
+            EventPriority::Low,
+            symbol_short!("archived"),
             (removed_count, caller),
         );
-
         removed_count
     }
 
@@ -1241,16 +1257,16 @@ impl FamilyWallet {
             .set(&symbol_short!("UPG_ADM"), &new_admin);
         
         // Emit admin transfer event for audit trail
-        env.events().publish(
-            (symbol_short!("family"), symbol_short!("adm_xfr")),
+        RemitwiseEvents::emit(
+            &env,
+            EventCategory::Access,
+            EventPriority::High,
+            symbol_short!("adm_xfr"),
             (current_upgrade_admin, new_admin.clone()),
         );
         
         true
     }
-
-    /// Get the current upgrade admin address.
-    /// 
     /// # Returns
     /// - `Some(Address)` if upgrade admin is set
     /// - `None` if no upgrade admin has been configured
@@ -1289,11 +1305,15 @@ impl FamilyWallet {
         members: Vec<BatchMemberItem>,
     ) -> u32 {
         caller.require_auth();
+        RemitwiseEvents::emit(
+            &env,
+            EventCategory::Access,
+            EventPriority::Medium,
+            symbol_short!("batch_mem"),
+            members.len() as u32,
+        );
         Self::require_role_at_least(&env, &caller, FamilyRole::Admin);
         Self::require_not_paused(&env);
-        if members.len() > MAX_BATCH_MEMBERS {
-            panic!("Batch too large");
-        }
         Self::extend_instance_ttl(&env);
         let mut members_map: Map<Address, FamilyMember> = env
             .storage()
@@ -1429,8 +1449,11 @@ impl FamilyWallet {
             panic!("Emergency transfer would violate minimum balance requirement");
         }
 
-        env.events().publish(
-            (symbol_short!("emerg"), EmergencyEvent::TransferInit),
+        RemitwiseEvents::emit(
+            &env,
+            EventCategory::Transaction,
+            EventPriority::High,
+            symbol_short!("em_init"),
             (proposer.clone(), recipient.clone(), amount),
         );
 
@@ -1443,14 +1466,17 @@ impl FamilyWallet {
             false,
         );
 
-        let store_ts: u64 = if now == 0 { 1u64 } else { now };
+        let store_ts = env.ledger().timestamp();
         env.storage()
             .instance()
             .set(&symbol_short!("EM_LAST"), &store_ts);
 
-        env.events().publish(
-            (symbol_short!("emerg"), EmergencyEvent::TransferExec),
-            (proposer, recipient, amount),
+        RemitwiseEvents::emit(
+            &env,
+            EventCategory::Transaction,
+            EventPriority::High,
+            symbol_short!("em_xfr"),
+            EmergencyEvent::TransferExec,
         );
 
         0

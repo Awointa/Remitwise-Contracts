@@ -393,11 +393,12 @@ impl ReportingContract {
     /// Generate remittance summary report
     pub fn get_remittance_summary(
         env: Env,
-        _user: Address,
+        user: Address,
         total_amount: i128,
         period_start: u64,
         period_end: u64,
     ) -> RemittanceSummary {
+        user.require_auth();
         let addresses: ContractAddresses = env
             .storage()
             .instance()
@@ -440,6 +441,7 @@ impl ReportingContract {
         period_start: u64,
         period_end: u64,
     ) -> SavingsReport {
+        user.require_auth();
         let addresses: ContractAddresses = env
             .storage()
             .instance()
@@ -486,6 +488,7 @@ impl ReportingContract {
         period_start: u64,
         period_end: u64,
     ) -> BillComplianceReport {
+        user.require_auth();
         let addresses: ContractAddresses = env
             .storage()
             .instance()
@@ -554,6 +557,7 @@ impl ReportingContract {
         period_start: u64,
         period_end: u64,
     ) -> InsuranceReport {
+        user.require_auth();
         let addresses: ContractAddresses = env
             .storage()
             .instance()
@@ -592,6 +596,7 @@ impl ReportingContract {
 
     /// Calculate financial health score
     pub fn calculate_health_score(env: Env, user: Address, _total_remittance: i128) -> HealthScore {
+        user.require_auth();
         let addresses: ContractAddresses = env
             .storage()
             .instance()
@@ -658,6 +663,7 @@ impl ReportingContract {
         period_start: u64,
         period_end: u64,
     ) -> FinancialHealthReport {
+        user.require_auth();
         let health_score =
             Self::calculate_health_score(env.clone(), user.clone(), total_remittance);
         let remittance_summary = Self::get_remittance_summary(
@@ -731,9 +737,10 @@ impl ReportingContract {
     /// two data points are supplied.
     pub fn get_trend_analysis_multi(
         env: Env,
-        _user: Address,
+        user: Address,
         history: Vec<(u64, i128)>,
     ) -> Vec<TrendData> {
+        user.require_auth();
         let mut result = Vec::new(&env);
         let len = history.len();
         if len < 2 {
@@ -798,6 +805,7 @@ impl ReportingContract {
         user: Address,
         period_key: u64,
     ) -> Option<FinancialHealthReport> {
+        user.require_auth();
         let reports: Map<(Address, u64), FinancialHealthReport> = env
             .storage()
             .instance()
@@ -903,6 +911,7 @@ impl ReportingContract {
     /// # Returns
     /// Vec of ArchivedReport structs
     pub fn get_archived_reports(env: Env, user: Address) -> Vec<ArchivedReport> {
+        user.require_auth();
         let archived: Map<(Address, u64), ArchivedReport> = env
             .storage()
             .instance()

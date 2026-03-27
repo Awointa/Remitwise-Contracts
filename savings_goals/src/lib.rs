@@ -4,6 +4,7 @@ use soroban_sdk::{
     contract, contracterror, contractimpl, contracttype, symbol_short, Address, Env, Map, String,
     Symbol, Vec,
 };
+use remitwise_common::{EventCategory, EventPriority, RemitwiseEvents};
 
 // Event topics
 const GOAL_CREATED: Symbol = symbol_short!("created");
@@ -414,7 +415,7 @@ impl SavingsGoalContract {
         // Authorization logic:
         // 1. If no upgrade admin exists, caller must equal new_admin (bootstrap)
         // 2. If upgrade admin exists, only current upgrade admin can transfer
-        match current_upgrade_admin {
+        match &current_upgrade_admin {
             None => {
                 // Bootstrap pattern - caller must be setting themselves as admin
                 if caller != new_admin {
@@ -423,7 +424,7 @@ impl SavingsGoalContract {
             }
             Some(current_admin) => {
                 // Admin transfer - only current admin can transfer
-                if current_admin != caller {
+                if *current_admin != caller {
                     panic!("Unauthorized: only current upgrade admin can transfer");
                 }
             }
@@ -434,8 +435,11 @@ impl SavingsGoalContract {
             .set(&symbol_short!("UPG_ADM"), &new_admin);
         
         // Emit admin transfer event for audit trail
-        env.events().publish(
-            (symbol_short!("savings"), symbol_short!("adm_xfr")),
+        RemitwiseEvents::emit(
+            &env,
+            EventCategory::Access,
+            EventPriority::High,
+            symbol_short!("adm_xfr"),
             (current_upgrade_admin, new_admin.clone()),
         );
     }
@@ -462,8 +466,11 @@ impl SavingsGoalContract {
         env.storage()
             .instance()
             .set(&symbol_short!("VERSION"), &new_version);
-        env.events().publish(
-            (symbol_short!("savings"), symbol_short!("upgraded")),
+        RemitwiseEvents::emit(
+            &env,
+            EventCategory::System,
+            EventPriority::High,
+            symbol_short!("upgraded"),
             (prev, new_version),
         );
     }
@@ -515,8 +522,11 @@ impl SavingsGoalContract {
             .instance()
             .set(&symbol_short!("GOALS"), &goals);
 
-        env.events().publish(
-            (symbol_short!("savings"), symbol_short!("tags_add")),
+        RemitwiseEvents::emit(
+            &env,
+            EventCategory::State,
+            EventPriority::Medium,
+            symbol_short!("tags_add"),
             (goal_id, caller.clone(), tags.clone()),
         );
 
@@ -566,8 +576,11 @@ impl SavingsGoalContract {
             .instance()
             .set(&symbol_short!("GOALS"), &goals);
 
-        env.events().publish(
-            (symbol_short!("savings"), symbol_short!("tags_rem")),
+        RemitwiseEvents::emit(
+            &env,
+            EventCategory::State,
+            EventPriority::Medium,
+            symbol_short!("tags_rem"),
             (goal_id, caller.clone(), tags.clone()),
         );
 
@@ -648,9 +661,18 @@ impl SavingsGoalContract {
             target_date,
             timestamp: env.ledger().timestamp(),
         };
-        env.events().publish((GOAL_CREATED,), event);
-        env.events().publish(
-            (symbol_short!("savings"), SavingsEvent::GoalCreated),
+        RemitwiseEvents::emit(
+            &env,
+            EventCategory::State,
+            EventPriority::Medium,
+            symbol_short!("created"),
+            event,
+        );
+        RemitwiseEvents::emit(
+            &env,
+            EventCategory::State,
+            EventPriority::Medium,
+            symbol_short!("goal_new"),
             (next_id, owner),
         );
 
@@ -730,7 +752,7 @@ impl SavingsGoalContract {
             new_total,
             timestamp: env.ledger().timestamp(),
         };
-        env.events().publish((FUNDS_ADDED,), funds_event);
+        RemitwiseEvents::emit(&env, EventCategory::Transaction, EventPriority::Medium, symbol_short!("funds_add"), funds_event);
 
         if was_completed && !previously_completed {
             let completed_event = GoalCompletedEvent {
@@ -816,7 +838,13 @@ impl SavingsGoalContract {
                 new_total,
                 timestamp: env.ledger().timestamp(),
             };
-            env.events().publish((FUNDS_ADDED,), funds_event);
+            RemitwiseEvents::emit(
+                &env,
+                EventCategory::Transaction,
+                EventPriority::Medium,
+                symbol_short!("funds_add"),
+                funds_event,
+            );
             if was_completed && !previously_completed {
                 let completed_event = GoalCompletedEvent {
                     goal_id: item.goal_id,
@@ -841,8 +869,11 @@ impl SavingsGoalContract {
         env.storage()
             .instance()
             .set(&symbol_short!("GOALS"), &goals);
-        env.events().publish(
-            (symbol_short!("savings"), symbol_short!("batch_add")),
+        RemitwiseEvents::emit(
+            &env,
+            EventCategory::Transaction,
+            EventPriority::Medium,
+            symbol_short!("batch_add"),
             (count, caller),
         );
         count

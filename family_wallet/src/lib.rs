@@ -76,6 +76,7 @@ pub struct EmergencyConfig {
     pub max_amount: i128,
     pub cooldown: u64,
     pub min_balance: i128,
+    pub daily_limit: i128,
 }
 
 #[contracttype]
@@ -260,22 +261,26 @@ impl FamilyWallet {
             .set(&symbol_short!("NEXT_TX"), &1u64);
 
         let em_config = EmergencyConfig {
-            max_amount: 1000_0000000,
+            max_amount: 10000_0000000,
             cooldown: 3600,
             min_balance: 0,
+            daily_limit: 100000_0000000,
         };
         env.storage()
             .instance()
             .set(&symbol_short!("EM_CONF"), &em_config);
+
         env.storage()
             .instance()
             .set(&symbol_short!("EM_MODE"), &false);
+
         env.storage()
             .instance()
             .set(&symbol_short!("EM_LAST"), &0u64);
 
         true
     }
+
 
     pub fn add_member(
         env: Env,
@@ -827,6 +832,7 @@ impl FamilyWallet {
         max_amount: i128,
         cooldown: u64,
         min_balance: i128,
+        daily_limit: i128,
     ) -> bool {
         caller.require_auth();
         Self::require_not_paused(&env);
@@ -849,6 +855,7 @@ impl FamilyWallet {
                 max_amount,
                 cooldown,
                 min_balance,
+                daily_limit,
             },
         );
 
@@ -1283,7 +1290,7 @@ impl FamilyWallet {
         // Emit admin transfer event for audit trail
         env.events().publish(
             (symbol_short!("family"), symbol_short!("adm_xfr")),
-            (current_upgrade_admin, new_admin.clone()),
+            (current_upgrade_admin.clone(), new_admin.clone()),
         );
         
         true
@@ -1463,6 +1470,22 @@ impl FamilyWallet {
             panic!("Emergency transfer cooldown period not elapsed");
         }
 
+        // Daily Rate Limit Enforcement
+        let day_in_seconds = 86400u64;
+        let mut daily_usage: (i128, u64) = env
+            .storage()
+            .instance()
+            .get(&symbol_short!("EM_VOL"))
+            .unwrap_or((0i128, 0u64));
+
+        if now >= daily_usage.1.saturating_add(day_in_seconds) {
+            daily_usage = (0i128, now);
+        }
+
+        if daily_usage.0.saturating_add(amount) > config.daily_limit {
+            panic!("Emergency daily limit exceeded");
+        }
+
         let token_client = TokenClient::new(&env, &token);
         let current_balance = token_client.balance(&proposer);
         if current_balance - amount < config.min_balance {
@@ -1487,6 +1510,11 @@ impl FamilyWallet {
         env.storage()
             .instance()
             .set(&symbol_short!("EM_LAST"), &store_ts);
+
+        daily_usage.0 = daily_usage.0.saturating_add(amount);
+        env.storage()
+            .instance()
+            .set(&symbol_short!("EM_VOL"), &daily_usage);
 
         env.events().publish(
             (symbol_short!("emerg"), EmergencyEvent::TransferExec),

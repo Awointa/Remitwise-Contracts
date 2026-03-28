@@ -16,7 +16,7 @@ members = [
     "orchestrator",
     "cli",
     "scenarios",
-
+    "remitwise-common",
     "testutils",
     "integration_tests",
 

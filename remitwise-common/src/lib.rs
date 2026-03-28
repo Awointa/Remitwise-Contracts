@@ -74,9 +74,10 @@ impl EventPriority {
 pub const DEFAULT_PAGE_LIMIT: u32 = 20;
 pub const MAX_PAGE_LIMIT: u32 = 50;
 
-/// Storage TTL constants for active data
-pub const INSTANCE_LIFETIME_THRESHOLD: u32 = 17280; // ~1 day
-pub const INSTANCE_BUMP_AMOUNT: u32 = 518400; // ~30 days
+/// Storage TTL constants (Ledger counts, ~5 seconds per ledger)
+pub const DAY_IN_LEDGERS: u32 = 17280;
+pub const INSTANCE_BUMP_AMOUNT: u32 = 30 * DAY_IN_LEDGERS; // 30 days
+pub const INSTANCE_LIFETIME_THRESHOLD: u32 = 7 * DAY_IN_LEDGERS; // 7 days
 
 /// Storage TTL constants for archived data
 pub const ARCHIVE_LIFETIME_THRESHOLD: u32 = 17280; // ~1 day
@@ -161,11 +162,6 @@ impl RemitwiseEvents {
         env.events().publish(topics, data);
     }
 }
-
-// Standardized TTL Constants (Ledger Counts)
-pub const DAY_IN_LEDGERS: u32 = 17280; // ~5 seconds per ledger
-pub const INSTANCE_BUMP_AMOUNT: u32 = 30 * DAY_IN_LEDGERS; // 30 days
-pub const INSTANCE_LIFETIME_THRESHOLD: u32 = 7 * DAY_IN_LEDGERS; // 7 days
 
 pub const PERSISTENT_BUMP_AMOUNT: u32 = 60 * DAY_IN_LEDGERS; // 60 days
 pub const PERSISTENT_LIFETIME_THRESHOLD: u32 = 15 * DAY_IN_LEDGERS; // 15 days

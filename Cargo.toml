@@ -16,11 +16,10 @@ members = [
     "orchestrator",
     "cli",
     "scenarios",
-    "remitwise-common",
-    "testutils",
-    "integration_tests",
 
-   
+    "testutils",
+
+    "integration_tests",
 ]
 default-members = [
     "remittance_split",
@@ -35,8 +34,7 @@ default-members = [
 resolver = "2"
 
 [dependencies]
-soroban-sdk = "21.0.0"
-ed25519-dalek = "2.1.1"
+soroban-sdk = "=21.7.7"
 remittance_split = { path = "./remittance_split" }
 savings_goals = { path = "./savings_goals" }
 bill_payments = { path = "./bill_payments" }

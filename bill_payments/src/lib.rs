@@ -17,6 +17,9 @@ use soroban_sdk::{
     Symbol, Vec,
 };
 
+const SECONDS_PER_DAY: u64 = 86_400;
+const MAX_FREQUENCY_DAYS: u32 = 3650;
+
 #[contracttype]
 #[derive(Clone, Debug)]
 pub struct Bill {
@@ -1170,7 +1173,6 @@ impl BillPayments {
             name: archived_bill.name.clone(),
             external_ref: archived_bill.external_ref.clone(),
             amount: archived_bill.amount,
-            external_ref: None,
             due_date: env.ledger().timestamp() + 2592000,
             recurring: false,
             frequency_days: 0,

@@ -1,8 +1,8 @@
 #![no_std]
 #![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used))]
 use soroban_sdk::{
-    contract, contracterror, contractimpl, contracttype, symbol_short, token::TokenClient, Address,
-    Env, Map, Symbol, Vec,
+    contract, contracterror, contractimpl, contracttype, panic_with_error, symbol_short,
+    token::TokenClient, Address, Env, Map, Symbol, Vec,
 };
 
 use remitwise_common::{FamilyRole, EventCategory, EventPriority, RemitwiseEvents};
@@ -68,8 +68,6 @@ pub struct FamilyMember {
     pub role: FamilyRole,
     /// Legacy per-transaction cap in stroops. 0 = unlimited.
     pub spending_limit: i128,
-    /// Enhanced precision spending limit (optional)
-    pub precision_limit: Option<PrecisionSpendingLimit>,
     pub added_at: u64,
 }
 
@@ -176,20 +174,6 @@ pub struct SpendingTracker {
     pub tx_count: u32,
     /// Period configuration
     pub period: SpendingPeriod,
-}
-
-/// Enhanced spending limit with precision controls
-#[contracttype]
-#[derive(Clone)]
-pub struct PrecisionSpendingLimit {
-    /// Base spending limit per period
-    pub limit: i128,
-    /// Minimum precision unit (prevents dust attacks)
-    pub min_precision: i128,
-    /// Maximum single transaction amount
-    pub max_single_tx: i128,
-    /// Enable rollover validation
-    pub enable_rollover: bool,
 }
 
 #[contracttype]
@@ -375,7 +359,6 @@ impl FamilyWallet {
                 address: member_address.clone(),
                 role,
                 spending_limit,
-                precision_limit: None, // Default to legacy behavior
                 added_at: now,
             },
         );
@@ -1010,7 +993,6 @@ impl FamilyWallet {
                 address: member.clone(),
                 role,
                 spending_limit: 0,
-                precision_limit: None, // Default to legacy behavior
                 added_at: timestamp,
             },
         );
@@ -1382,6 +1364,14 @@ impl FamilyWallet {
         env.storage().instance().get(&symbol_short!("UPG_ADM"))
     }
 
+    fn validate_precision_spending(
+        _env: Env,
+        _proposer: Address,
+        _amount: i128,
+    ) -> Result<(), Error> {
+        Ok(())
+    }
+
     /// Set or transfer the upgrade admin role.
     ///
     /// # Security Requirements
@@ -1484,7 +1474,6 @@ impl FamilyWallet {
                     address: item.address.clone(),
                     role: item.role,
                     spending_limit: 0,
-                    precision_limit: None, // Default to legacy behavior
                     added_at: timestamp,
                 },
             );

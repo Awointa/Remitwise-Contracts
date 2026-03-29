@@ -131,24 +131,6 @@ pub struct BillPayments;
 
 #[contractimpl]
 impl BillPayments {
-    /// Create a new bill
-    ///
-    /// # Arguments
-    /// * `owner` - Address of the bill owner (must authorize)
-    /// * `name` - Name of the bill (e.g., "Electricity", "School Fees")
-    /// * `amount` - Amount to pay (must be positive)
-    /// * `due_date` - Due date as Unix timestamp
-    /// * `recurring` - Whether this is a recurring bill
-    /// * `frequency_days` - Frequency in days for recurring bills (must be > 0 if recurring)
-    /// * `external_ref` - Optional external system reference ID
-    ///
-    /// # Returns
-    /// The ID of the created bill
-    ///
-    /// # Errors
-    /// * `InvalidAmount` - If amount is zero or negative
-    /// * `InvalidFrequency` - If recurring is true but frequency_days is 0 or exceeds MAX_FREQUENCY_DAYS
-    /// * `InvalidDueDate` - If due_date is invalid or arithmetic overflows
     // -----------------------------------------------------------------------
     // Internal helpers
     // -----------------------------------------------------------------------
@@ -195,9 +177,9 @@ impl BillPayments {
         }
 
         // Convert to uppercase
-        for i in start..end {
-            if buf[i] >= b'a' && buf[i] <= b'z' {
-                buf[i] -= 32;
+        for byte in buf[start..end].iter_mut() {
+            if (*byte).is_ascii_lowercase() {
+                *byte -= 32;
             }
         }
 
@@ -235,11 +217,10 @@ impl BillPayments {
         let mut buf = [0u8; 12];
         currency.copy_into_slice(&mut buf[..length as usize]);
 
-        for i in 0..length as usize {
-            let byte = buf[i];
-            let is_alphanumeric = (byte >= b'a' && byte <= b'z') ||
-                                  (byte >= b'A' && byte <= b'Z') ||
-                                  (byte >= b'0' && byte <= b'9');
+        for &byte in buf.iter().take(length as usize) {
+            let is_alphanumeric = byte.is_ascii_lowercase()
+                || byte.is_ascii_uppercase()
+                || byte.is_ascii_digit();
             if !is_alphanumeric {
                 return Err(Error::InvalidCurrency);
             }
@@ -273,9 +254,6 @@ impl BillPayments {
         }
         Ok(())
     }
-
-    /// Clamp a caller-supplied limit to [1, MAX_PAGE_LIMIT].
-    /// A value of 0 is treated as DEFAULT_PAGE_LIMIT.
 
     // -----------------------------------------------------------------------
     // Pause / upgrade
@@ -1659,7 +1637,10 @@ impl BillPayments {
             .get(&STORAGE_UNPAID_TOTALS)
             .unwrap_or_else(|| Map::new(env));
         let current = totals.get(owner.clone()).unwrap_or(0);
-        let next = current.checked_add(delta).expect("overflow");
+        let next = match current.checked_add(delta) {
+            Some(n) => n,
+            None => panic!("overflow"),
+        };
         totals.set(owner.clone(), next);
         env.storage()
             .instance()
@@ -2651,7 +2632,7 @@ mod test {
         /// when payment is made.
         #[test]
         fn prop_recurring_next_bill_due_date_follows_original(
-            base_due in 1_000_000u64..5_000_000u64,
+            _base_due in 1_000_000u64..5_000_000u64,
             base_due_offset in 1_000_000u64..5_000_000u64,
             pay_offset in 1u64..100_000u64,
             freq_days in 1u32..366u32,

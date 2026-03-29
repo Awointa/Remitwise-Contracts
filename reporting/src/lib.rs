@@ -504,7 +504,7 @@ impl ReportingContract {
                 return RemittanceSummary {
                     total_received: total_amount,
                     total_allocated: total_amount,
-                    category_breakdown: Vec::new(&env),
+                    category_breakdown: Vec::new(env),
                     period_start,
                     period_end,
                     data_availability: DataAvailability::Missing,
@@ -753,7 +753,7 @@ impl ReportingContract {
             .unwrap_or_else(|| panic!("Contract addresses not configured"));
 
         // Savings score (0-40 points)
-        let savings_client = SavingsGoalsClient::new(&env, &addresses.savings_goals);
+        let savings_client = SavingsGoalsClient::new(env, &addresses.savings_goals);
         let goals = savings_client.get_all_goals(&user);
         let mut total_target = 0i128;
         let mut total_saved = 0i128;
@@ -773,7 +773,7 @@ impl ReportingContract {
         };
 
         // Bills score (0-40 points)
-        let bill_client = BillPaymentsClient::new(&env, &addresses.bill_payments);
+        let bill_client = BillPaymentsClient::new(env, &addresses.bill_payments);
         let unpaid_bills = bill_client.get_unpaid_bills(&user, &0u32, &50u32).items;
         let bills_score = if unpaid_bills.is_empty() {
             40
@@ -790,7 +790,7 @@ impl ReportingContract {
         };
 
         // Insurance score (0-20 points)
-        let insurance_client = InsuranceClient::new(&env, &addresses.insurance);
+        let insurance_client = InsuranceClient::new(env, &addresses.insurance);
         let policy_page = insurance_client.get_active_policies(&user, &0, &1);
         let insurance_score = if !policy_page.items.is_empty() { 20 } else { 0 };
 

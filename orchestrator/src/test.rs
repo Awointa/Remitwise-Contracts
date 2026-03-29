@@ -1,5 +1,5 @@
 use crate::{ExecutionState, Orchestrator, OrchestratorClient, OrchestratorError};
-use soroban_sdk::{contract, contractimpl, Address, Env, Vec, symbol_short};
+use soroban_sdk::{contract, contractimpl, contracttype, Address, Env, Vec, symbol_short};
 use soroban_sdk::testutils::Address as _; 
 
 // ============================================================================
@@ -149,7 +149,7 @@ fn test_reentrancy_guard_blocks_concurrent_flow() {
 
 #[test]
 fn test_self_reference_rejected() {
-    let (env, orchestrator_id, family_wallet_id, remittance_split_id,
+    let (env, orchestrator_id, _family_wallet_id, remittance_split_id,
          savings_id, bills_id, insurance_id, user) = setup_test_env();
     let client = OrchestratorClient::new(&env, &orchestrator_id);
 
@@ -166,7 +166,7 @@ fn test_self_reference_rejected() {
 #[test]
 fn test_duplicate_addresses_rejected() {
     let (env, orchestrator_id, family_wallet_id, remittance_split_id,
-         savings_id, bills_id, insurance_id, user) = setup_test_env();
+         savings_id, _bills_id, insurance_id, user) = setup_test_env();
     let client = OrchestratorClient::new(&env, &orchestrator_id);
 
     // Use same address for savings and bills
@@ -184,7 +184,7 @@ fn test_duplicate_addresses_rejected() {
 // ============================================================================
 #[cfg(test)]
 mod nonce_tests {
-    use super::tests::setup;
+    use super::setup;
     use super::*;
 
     #[test]

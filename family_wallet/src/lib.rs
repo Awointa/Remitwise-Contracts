@@ -1539,7 +1539,7 @@ impl FamilyWallet {
             EventCategory::Access,
             EventPriority::Medium,
             symbol_short!("batch_mem"),
-            members.len() as u32,
+            members.len(),
         );
         Self::require_role_at_least(&env, &caller, FamilyRole::Admin);
         Self::require_not_paused(&env);

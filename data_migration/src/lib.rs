@@ -65,20 +65,15 @@ pub const SNAPSHOT_SCHEMA_VERSION: u32 = SCHEMA_VERSION;
 /// New variants may be added in future schema versions.  Importers that
 /// encounter an unrecognised `ChecksumAlgorithm` variant **must** reject the
 /// snapshot rather than skipping verification.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[non_exhaustive]
 pub enum ChecksumAlgorithm {
     /// SHA-256 over the concatenation:
     /// `version_le_bytes(4) || format_utf8_bytes || canonical_payload_json`.
     ///
     /// The result is encoded as a lowercase hex string (64 characters).
+    #[default]
     Sha256,
-}
-
-impl Default for ChecksumAlgorithm {
-    fn default() -> Self {
-        Self::Sha256
-    }
 }
 
 /// Versioned migration event payload meant for indexing and historical tracking.
@@ -650,7 +645,8 @@ mod tests {
     fn test_algorithm_field_roundtrips_json() {
         let snapshot = ExportSnapshot::new(sample_remittance_payload(), ExportFormat::Json);
         let bytes = export_to_json(&snapshot).unwrap();
-        let loaded = import_from_json(&bytes).unwrap();
+        let mut tracker = MigrationTracker::new();
+        let loaded = import_from_json(&bytes, &mut tracker, 1).unwrap();
         assert_eq!(loaded.header.hash_algorithm, ChecksumAlgorithm::Sha256);
     }
 
@@ -658,7 +654,8 @@ mod tests {
     fn test_algorithm_field_roundtrips_binary() {
         let snapshot = ExportSnapshot::new(sample_savings_payload(), ExportFormat::Binary);
         let bytes = export_to_binary(&snapshot).unwrap();
-        let loaded = import_from_binary(&bytes).unwrap();
+        let mut tracker = MigrationTracker::new();
+        let loaded = import_from_binary(&bytes, &mut tracker, 1).unwrap();
         assert_eq!(loaded.header.hash_algorithm, ChecksumAlgorithm::Sha256);
     }
 

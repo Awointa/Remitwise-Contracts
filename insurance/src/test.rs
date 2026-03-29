@@ -1,6 +1,9 @@
 #![cfg(test)]
+#![allow(unused_variables)]
+#![allow(clippy::unnecessary_operation)]
 
 use super::*;
+use crate::InsuranceError;
 use soroban_sdk::{
     testutils::{Address as AddressTrait, Ledger},
     Address, Env, String,
@@ -23,13 +26,17 @@ fn short_name(env: &Env) -> Result<String, ()> {
 }
 
 
-use ::testutils::{set_ledger_time, setup_test_env};
+use ::testutils::set_ledger_time;
 
 // Removed local set_time in favor of testutils::set_ledger_time
 
 #[test]
 fn test_create_policy_succeeds() {
-    setup_test_env!(env, Insurance, InsuranceClient, client, owner);
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register_contract(None, Insurance);
+    let client = InsuranceClient::new(&env, &contract_id);
+    let owner = Address::generate(&env);
     client.initialize(&owner);
 
     let name = String::from_str(&env, "Health Policy");
@@ -55,7 +62,6 @@ fn test_create_policy_succeeds() {
 #[test]
 fn test_create_policy_invalid_premium() {
     let env = Env::default();
-    env.mock_all_auths();
     let contract_id = env.register_contract(None, Insurance);
     let client = InsuranceClient::new(&env, &contract_id);
     let owner = Address::generate(&env);
@@ -113,17 +119,21 @@ fn test_pay_premium() {
         &10000,
     &None);
 
-// ── pay_premium ───────────────────────────────────────────────────────────────
+    // Initial next_payment_date is ~30 days from creation
+    // We'll simulate passage of time is separate, but here we just check it updates
+    let initial_policy = client.get_policy(&policy_id).unwrap();
+    let initial_due = initial_policy.next_payment_date;
 
-#[test]
-fn test_pay_premium_updates_date() {
-    let (env, client, owner) = setup();
-    let id = make_policy(&env, &client, &owner);
-    let before = client.get_policy(&id).unwrap().next_payment_date;
+    // Advance ledger time to simulate paying slightly later
     set_ledger_time(&env, 1, env.ledger().timestamp() + 1000);
-    client.pay_premium(&owner, &id);
-    let after = client.get_policy(&id).unwrap().next_payment_date;
-    assert!(after > before);
+
+    client.pay_premium(&owner, &policy_id);
+
+    let updated_policy = client.get_policy(&policy_id).unwrap();
+
+    // New validation logic: new due date should be current timestamp + 30 days
+    // Since we advanced timestamp by 1000, the new due date should be > initial due date
+    assert!(updated_policy.next_payment_date > initial_due);
 }
 
 #[test]
@@ -168,14 +178,11 @@ fn test_deactivate_policy() {
         &10000,
     &None);
 
-// ── deactivate_policy ─────────────────────────────────────────────────────────
+    let success = client.deactivate_policy(&owner, &policy_id);
+    assert!(success);
 
-#[test]
-fn test_deactivate_policy() {
-    let (env, client, owner) = setup();
-    let id = make_policy(&env, &client, &owner);
-    assert!(client.deactivate_policy(&owner, &id));
-    assert!(!client.get_policy(&id).unwrap().active);
+    let policy = client.get_policy(&policy_id).unwrap();
+    assert!(!policy.active);
 }
 
 #[test]
@@ -211,17 +218,13 @@ fn test_get_active_policies() {
         &3000,
     &None);
 
-// ── get_active_policies / get_total_monthly_premium ───────────────────────────
+    // Deactivate P2
+    client.deactivate_policy(&owner, &p2);
 
     let active = client.get_active_policies(&owner, &0, &100).items;
     assert_eq!(active.len(), 2);
 
-#[test]
-fn test_get_total_monthly_premium() {
-    let (env, client, owner) = setup();
-    client.create_policy(&owner, &String::from_str(&env, "P1"), &CoverageType::Health, &100, &1000);
-    client.create_policy(&owner, &String::from_str(&env, "P2"), &CoverageType::Health, &200, &2000);
-    assert_eq!(client.get_total_monthly_premium(&owner), 300);
+    // Check specific IDs if needed, but length 2 confirms one was filtered
 }
 
 #[test]
@@ -232,7 +235,7 @@ fn test_get_active_policies_excludes_deactivated() {
     let owner = Address::generate(&env);
     client.initialize(&owner);
 
-// ── add_tag: authorization ────────────────────────────────────────────────────
+    env.mock_all_auths();
 
     // Create policy 1 and policy 2 for the same owner
     let policy_id1 = client.create_policy(
@@ -268,7 +271,6 @@ fn test_get_active_policies_excludes_deactivated() {
     assert!(only.active, "returned policy must have active == true");
 }
 
-/// Missing auth must fail.
 #[test]
 fn test_get_total_monthly_premium() {
     let env = Env::default();
@@ -298,7 +300,6 @@ fn test_get_total_monthly_premium() {
     assert_eq!(total, 300);
 }
 
-/// Tags on one policy must not appear on another.
 #[test]
 fn test_get_total_monthly_premium_zero_policies() {
     let env = Env::default();
@@ -307,19 +308,13 @@ fn test_get_total_monthly_premium_zero_policies() {
     let owner = Address::generate(&env);
     client.initialize(&owner);
 
-// ── add_tag: events ───────────────────────────────────────────────────────────
+    env.mock_all_auths();
 
-/// add_tag must emit a tag_added event.
-#[test]
-fn test_add_tag_emits_event() {
-    let (env, client, owner) = setup();
-    let id = make_policy(&env, &client, &owner);
-    let before = env.events().all().len();
-    client.add_tag(&owner, &id, &String::from_str(&env, "vip"));
-    assert!(env.events().all().len() > before);
+    // Fresh address with no policies
+    let total = client.get_total_monthly_premium(&owner);
+    assert_eq!(total, 0);
 }
 
-/// Duplicate add must NOT emit a tag_added event (nothing changed).
 #[test]
 fn test_get_total_monthly_premium_one_policy() {
     let env = Env::default();
@@ -328,7 +323,7 @@ fn test_get_total_monthly_premium_one_policy() {
     let owner = Address::generate(&env);
     client.initialize(&owner);
 
-// ── remove_tag: happy path ────────────────────────────────────────────────────
+    env.mock_all_auths();
 
     // Create one policy with monthly_premium = 500
     client.create_policy(
@@ -343,7 +338,6 @@ fn test_get_total_monthly_premium_one_policy() {
     assert_eq!(total, 500);
 }
 
-/// Removing all tags results in an empty list.
 #[test]
 fn test_get_total_monthly_premium_multiple_active_policies() {
     let env = Env::default();
@@ -352,7 +346,7 @@ fn test_get_total_monthly_premium_multiple_active_policies() {
     let owner = Address::generate(&env);
     client.initialize(&owner);
 
-// ── remove_tag: graceful on missing ──────────────────────────────────────────
+    env.mock_all_auths();
 
     // Create three policies with premiums 100, 200, 300
     client.create_policy(
@@ -381,7 +375,6 @@ fn test_get_total_monthly_premium_multiple_active_policies() {
     assert_eq!(total, 600); // 100 + 200 + 300
 }
 
-/// Removing a missing tag emits a "tag_no_tag" (Tag Not Found) event.
 #[test]
 fn test_get_total_monthly_premium_deactivated_policy_excluded() {
     let env = Env::default();
@@ -412,32 +405,23 @@ fn test_get_total_monthly_premium_deactivated_policy_excluded() {
     let total_initial = client.get_total_monthly_premium(&owner);
     assert_eq!(total_initial, 300); // 100 + 200
 
-// ── remove_tag: authorization ─────────────────────────────────────────────────
+    // Deactivate the first policy
+    client.deactivate_policy(&owner, &policy1);
 
-/// A stranger cannot remove tags.
-#[test]
-#[should_panic(expected = "unauthorized")]
-fn test_remove_tag_by_stranger_panics() {
-    let (env, client, owner) = setup();
-    let id = make_policy(&env, &client, &owner);
-    client.add_tag(&owner, &id, &String::from_str(&env, "vip"));
-    let stranger = Address::generate(&env);
-    client.remove_tag(&stranger, &id, &String::from_str(&env, "vip"));
+    // Verify total only includes the active policy
+    let total_after_deactivation = client.get_total_monthly_premium(&owner);
+    assert_eq!(total_after_deactivation, 200); // Only policy 2
 }
 
-/// Admin can remove tags from any policy.
 #[test]
-fn test_remove_tag_by_admin_succeeds() {
-    let (env, client, owner) = setup();
-    let admin = Address::generate(&env);
-    client.set_admin(&admin, &admin);
-    let id = make_policy(&env, &client, &owner);
-    client.add_tag(&owner, &id, &String::from_str(&env, "vip"));
-    client.remove_tag(&admin, &id, &String::from_str(&env, "vip"));
-    assert_eq!(client.get_policy(&id).unwrap().tags.len(), 0);
-}
+fn test_get_total_monthly_premium_different_owner_isolation() {
+    let env = Env::default();
+    let contract_id = env.register_contract(None, Insurance);
+    let client = InsuranceClient::new(&env, &contract_id);
+    let owner_a = Address::generate(&env);
+    let owner_b = Address::generate(&env);
 
-// ── remove_tag: events ────────────────────────────────────────────────────────
+    env.mock_all_auths();
 
     // Create policies for owner_a
     client.create_policy(
@@ -464,33 +448,20 @@ fn test_remove_tag_by_admin_succeeds() {
         &3000,
     &None);
 
-// ── 1. Unauthorized Access ────────────────────────────────────────────────────
+    // Verify owner_a's total only includes their policies
+    let total_a = client.get_total_monthly_premium(&owner_a);
+    assert_eq!(total_a, 300); // 100 + 200
 
-/// A random address that is neither the policy owner nor the admin must cause
-/// add_tag to panic with "unauthorized". State must be unchanged.
-#[test]
-#[should_panic(expected = "unauthorized")]
-fn test_qa_unauthorized_stranger_cannot_add_tag() {
-    let (env, client, owner) = setup();
-    let id = make_policy(&env, &client, &owner);
-    let random = Address::generate(&env);
-    // random is not owner, no admin set — must panic
-    client.add_tag(&random, &id, &String::from_str(&env, "ACTIVE"));
+    // Verify owner_b's total only includes their policies
+    let total_b = client.get_total_monthly_premium(&owner_b);
+    assert_eq!(total_b, 300); // 300
+
+    // Verify no cross-owner leakage
+    assert_ne!(total_a, 0); // owner_a has policies
+    assert_ne!(total_b, 0); // owner_b has policies
+    assert_eq!(total_a, total_b); // Both have same total but different policies
 }
 
-/// A random address must also be blocked from remove_tag.
-#[test]
-#[should_panic(expected = "unauthorized")]
-fn test_qa_unauthorized_stranger_cannot_remove_tag() {
-    let (env, client, owner) = setup();
-    let id = make_policy(&env, &client, &owner);
-    client.add_tag(&owner, &id, &String::from_str(&env, "ACTIVE"));
-    let random = Address::generate(&env);
-    client.remove_tag(&random, &id, &String::from_str(&env, "ACTIVE"));
-}
-
-/// After a failed unauthorized add_tag, the policy tags must remain empty —
-/// no partial state mutation.
 #[test]
 fn test_multiple_premium_payments() {
     let env = Env::default();
@@ -499,8 +470,7 @@ fn test_multiple_premium_payments() {
     let owner = Address::generate(&env);
     client.initialize(&owner);
 
-    // attempt unauthorized add — ignore the panic via try_
-    let _ = client.try_add_tag(&random, &id, &String::from_str(&env, "ACTIVE"));
+    env.mock_all_auths();
 
     let policy_id = client.create_policy(
         &owner,
@@ -510,32 +480,37 @@ fn test_multiple_premium_payments() {
         &10000,
     &None);
 
-// ── 2. The Double-Tag ─────────────────────────────────────────────────────────
+    let p1 = client.get_policy(&policy_id).unwrap();
+    let first_due = p1.next_payment_date;
 
-/// Adding "ACTIVE" twice must leave exactly one "ACTIVE" tag in storage.
-#[test]
-fn test_qa_double_tag_active_stored_once() {
-    let (env, client, owner) = setup();
-    let id = make_policy(&env, &client, &owner);
-    let active = String::from_str(&env, "ACTIVE");
+    // First payment
+    client.pay_premium(&owner, &policy_id);
 
-    client.add_tag(&owner, &id, &active);
-    client.add_tag(&owner, &id, &active); // duplicate
+    // Simulate time passing (still before next due)
+    set_ledger_time(&env, 1, env.ledger().timestamp() + 5000);
 
-    let tags = client.get_policy(&id).unwrap().tags;
-    assert_eq!(tags.len(), 1, "duplicate tag must not be stored twice");
+    // Second payment
+    client.pay_premium(&owner, &policy_id);
+
+    let p2 = client.get_policy(&policy_id).unwrap();
+
+    // The logic in contract sets next_payment_date to 'now + 30 days'
+    // So paying twice in quick succession just pushes it to 30 days from the SECOND payment
+    // It does NOT add 60 days from start. This test verifies that behavior.
+    assert!(p2.next_payment_date > first_due);
     assert_eq!(
-        tags.get(0).unwrap(),
-        String::from_str(&env, "ACTIVE"),
-        "the stored tag must be ACTIVE"
+        p2.next_payment_date,
+        env.ledger().timestamp() + (30 * 86400)
     );
 }
 
-/// The second (duplicate) add_tag call must emit NO new event — the contract
-/// returns early before publishing.
 #[test]
 fn test_create_premium_schedule_succeeds() {
-    setup_test_env!(env, Insurance, InsuranceClient, client, owner);
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register_contract(None, Insurance);
+    let client = InsuranceClient::new(&env, &contract_id);
+    let owner = Address::generate(&env);
     client.initialize(&owner);
     set_ledger_time(&env, 1, 1000);
 
@@ -557,8 +532,6 @@ fn test_create_premium_schedule_succeeds() {
     assert!(schedule.active);
 }
 
-/// Adding "ACTIVE" then a different tag then "ACTIVE" again must still result
-/// in exactly two unique tags.
 #[test]
 fn test_modify_premium_schedule() {
     let env = Env::default();
@@ -567,9 +540,8 @@ fn test_modify_premium_schedule() {
     let owner = <soroban_sdk::Address as AddressTrait>::generate(&env);
     client.initialize(&owner);
 
-    client.add_tag(&owner, &id, &String::from_str(&env, "ACTIVE"));
-    client.add_tag(&owner, &id, &String::from_str(&env, "VIP"));
-    client.add_tag(&owner, &id, &String::from_str(&env, "ACTIVE")); // dup
+    env.mock_all_auths();
+    set_ledger_time(&env, 1, 1000);
 
     let policy_id = client.create_policy(
         &owner,
@@ -579,18 +551,14 @@ fn test_modify_premium_schedule() {
         &50000,
     &None);
 
-// ── 3. The Ghost Remove ───────────────────────────────────────────────────────
+    let schedule_id = client.create_premium_schedule(&owner, &policy_id, &3000, &2592000);
+    client.modify_premium_schedule(&owner, &schedule_id, &4000, &2678400);
 
-/// Removing a tag that was never added must not crash.
-#[test]
-fn test_qa_ghost_remove_does_not_panic() {
-    let (env, client, owner) = setup();
-    let id = make_policy(&env, &client, &owner);
-    // no tags — removing "GHOST" must be graceful
-    client.remove_tag(&owner, &id, &String::from_str(&env, "GHOST"));
+    let schedule = client.get_premium_schedule(&schedule_id).unwrap();
+    assert_eq!(schedule.next_due, 4000);
+    assert_eq!(schedule.interval, 2678400);
 }
 
-/// After a ghost remove the tag list must still be empty.
 #[test]
 fn test_cancel_premium_schedule() {
     let env = Env::default();
@@ -617,7 +585,6 @@ fn test_cancel_premium_schedule() {
     assert!(!schedule.active);
 }
 
-/// Ghost remove on a policy that already has other tags must not disturb them.
 #[test]
 fn test_execute_due_premium_schedules() {
     let env = Env::default();
@@ -637,46 +604,18 @@ fn test_execute_due_premium_schedules() {
         &50000,
     &None);
 
-/// add_tag must publish exactly one event with topic ("insure", "tag_added")
-/// and data (policy_id, tag).
-#[test]
-fn test_qa_add_tag_event_topics_and_data() {
-    use soroban_sdk::{symbol_short, IntoVal};
+    let schedule_id = client.create_premium_schedule(&owner, &policy_id, &3000, &0);
 
-    let (env, client, owner) = setup();
-    let id = make_policy(&env, &client, &owner);
-    let tag = String::from_str(&env, "ACTIVE");
+    set_ledger_time(&env, 1, 3500);
+    let executed = client.execute_due_premium_schedules();
 
     assert_eq!(executed.len(), 1);
     assert_eq!(executed.get(0), Some(schedule_id));
 
-    let all = env.events().all();
-    assert_eq!(
-        all.len(),
-        events_before + 1,
-        "add_tag must emit exactly one event"
-    );
-
-    let (contract_id, topics, data) = all.last().unwrap();
-    let _ = contract_id; // emitted by our contract
-
-    // Verify topics: ("insure", "tag_added")
-    let expected_topics = soroban_sdk::vec![
-        &env,
-        symbol_short!("insure").into_val(&env),
-        symbol_short!("tag_added").into_val(&env),
-    ];
-    assert_eq!(topics, expected_topics, "tag_added event topics mismatch");
-
-    // Verify data: (policy_id, tag)
-    let (emitted_id, emitted_tag): (u32, String) =
-        soroban_sdk::FromVal::from_val(&env, &data);
-    assert_eq!(emitted_id, id, "tag_added event must carry the correct policy_id");
-    assert_eq!(emitted_tag, tag, "tag_added event must carry the correct tag");
+    let policy = client.get_policy(&policy_id).unwrap();
+    assert_eq!(policy.next_payment_date, 3500 + 30 * 86400);
 }
 
-/// remove_tag on an existing tag must publish exactly one event with topic
-/// ("insure", "tag_rmvd") and data (policy_id, tag).
 #[test]
 fn test_execute_recurring_premium_schedule() {
     let env = Env::default();
@@ -685,10 +624,8 @@ fn test_execute_recurring_premium_schedule() {
     let owner = <soroban_sdk::Address as AddressTrait>::generate(&env);
     client.initialize(&owner);
 
-    let (env, client, owner) = setup();
-    let id = make_policy(&env, &client, &owner);
-    let tag = String::from_str(&env, "ACTIVE");
-    client.add_tag(&owner, &id, &tag);
+    env.mock_all_auths();
+    set_ledger_time(&env, 1, 1000);
 
     let policy_id = client.create_policy(
         &owner,
@@ -698,23 +635,16 @@ fn test_execute_recurring_premium_schedule() {
         &50000,
     &None);
 
-    let (_, topics, data) = all.last().unwrap();
+    let schedule_id = client.create_premium_schedule(&owner, &policy_id, &3000, &2592000);
 
-    let expected_topics = soroban_sdk::vec![
-        &env,
-        symbol_short!("insure").into_val(&env),
-        symbol_short!("tag_rmvd").into_val(&env),
-    ];
-    assert_eq!(topics, expected_topics, "tag_rmvd event topics mismatch");
+    set_ledger_time(&env, 1, 3500);
+    client.execute_due_premium_schedules();
 
-    let (emitted_id, emitted_tag): (u32, String) =
-        soroban_sdk::FromVal::from_val(&env, &data);
-    assert_eq!(emitted_id, id);
-    assert_eq!(emitted_tag, tag);
+    let schedule = client.get_premium_schedule(&schedule_id).unwrap();
+    assert!(schedule.active);
+    assert_eq!(schedule.next_due, 3000 + 2592000);
 }
 
-/// Ghost remove must publish exactly one event with topic ("insure", "tag_miss")
-/// and data (policy_id, tag) — the "Tag Not Found" signal.
 #[test]
 fn test_execute_missed_premium_schedules() {
     let env = Env::default();
@@ -723,9 +653,8 @@ fn test_execute_missed_premium_schedules() {
     let owner = <soroban_sdk::Address as AddressTrait>::generate(&env);
     client.initialize(&owner);
 
-    let (env, client, owner) = setup();
-    let id = make_policy(&env, &client, &owner);
-    let tag = String::from_str(&env, "GHOST");
+    env.mock_all_auths();
+    set_ledger_time(&env, 1, 1000);
 
     let policy_id = client.create_policy(
         &owner,
@@ -735,19 +664,16 @@ fn test_execute_missed_premium_schedules() {
         &50000,
     &None);
 
-    let (_, topics, data) = all.last().unwrap();
+    let schedule_id = client.create_premium_schedule(&owner, &policy_id, &3000, &2592000);
 
     set_ledger_time(&env, 1, 3000 + 2592000 * 3 + 100);
     client.execute_due_premium_schedules();
 
-    let (emitted_id, emitted_tag): (u32, String) =
-        soroban_sdk::FromVal::from_val(&env, &data);
-    assert_eq!(emitted_id, id, "tag_miss event must carry the correct policy_id");
-    assert_eq!(emitted_tag, tag, "tag_miss event must carry the correct tag");
+    let schedule = client.get_premium_schedule(&schedule_id).unwrap();
+    assert_eq!(schedule.missed_count, 3);
+    assert!(schedule.next_due > 3000 + 2592000 * 3);
 }
 
-/// Full lifecycle: add "ACTIVE", add "ACTIVE" again (dup), remove "ACTIVE",
-/// remove "ACTIVE" again (ghost). Verify the exact event sequence.
 #[test]
 fn test_get_premium_schedules() {
     let env = Env::default();

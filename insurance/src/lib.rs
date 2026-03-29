@@ -152,23 +152,6 @@ impl Insurance {
         Ok(())
     }
 
-    /// Create a new insurance policy
-    ///
-    /// # Arguments
-    /// * `owner` - Address of the policy owner (must authorize)
-    /// * `name` - Name of the policy
-    /// * `coverage_type` - Type of coverage (e.g., "health", "emergency")
-    /// * `monthly_premium` - Monthly premium amount (must be positive)
-    /// * `coverage_amount` - Total coverage amount (must be positive)
-    /// * `external_ref` - Optional external system reference ID
-    ///
-    /// # Returns
-    /// The ID of the created policy
-    ///
-    /// # Panics
-    /// - If owner doesn't authorize the transaction
-    /// - If monthly_premium is not positive
-    /// - If coverage_amount is not positive
     // -----------------------------------------------------------------------
     // Internal helpers
     // -----------------------------------------------------------------------
@@ -202,7 +185,7 @@ impl Insurance {
     }
     fn require_initialized(env: &Env) -> Result<(), InsuranceError> {
         if Self::get_pause_admin(env).is_none() {
-            panic!("not initialized");
+            return Err(InsuranceError::NotInitialized);
         }
         Ok(())
     }
@@ -381,7 +364,7 @@ impl Insurance {
             panic!("Tags cannot be empty");
         }
         for tag in tags.iter() {
-            if tag.len() == 0 || tag.len() > 32 {
+            if tag.is_empty() || tag.len() > 32 {
                 panic!("Tag must be between 1 and 32 characters");
             }
         }
@@ -403,7 +386,10 @@ impl Insurance {
             .get(&symbol_short!("POLICIES"))
             .unwrap_or_else(|| Map::new(&env));
 
-        let mut policy = policies.get(policy_id).expect("Policy not found");
+        let mut policy = match policies.get(policy_id) {
+            Some(p) => p,
+            None => panic!("Policy not found"),
+        };
 
         if policy.owner != caller {
             panic!("Only the policy owner can add tags");
@@ -440,7 +426,10 @@ impl Insurance {
             .get(&symbol_short!("POLICIES"))
             .unwrap_or_else(|| Map::new(&env));
 
-        let mut policy = policies.get(policy_id).expect("Policy not found");
+        let mut policy = match policies.get(policy_id) {
+            Some(p) => p,
+            None => panic!("Policy not found"),
+        };
 
         if policy.owner != caller {
             panic!("Only the policy owner can remove tags");
@@ -503,7 +492,7 @@ impl Insurance {
         owner.require_auth();
         Self::require_not_paused(&env, pause_functions::CREATE_POLICY)?;
 
-        if name.len() == 0 || name.len() > 64 {
+        if name.is_empty() || name.len() > 64 {
             return Err(InsuranceError::InvalidName);
         }
 
@@ -554,7 +543,7 @@ impl Insurance {
             owner: owner.clone(),
             name: name.clone(),
             external_ref,
-            coverage_type: coverage_type.clone(),
+            coverage_type,
             monthly_premium,
             coverage_amount,
             active: true,
@@ -724,7 +713,9 @@ impl Insurance {
     /// # Returns
     /// InsurancePolicy struct or None if not found
     pub fn get_policy(env: Env, policy_id: u32) -> Option<InsurancePolicy> {
-        Self::require_initialized(&env).unwrap();
+        if Self::require_initialized(&env).is_err() {
+            return None;
+        }
         let policies: Map<u32, InsurancePolicy> = env
             .storage()
             .instance()
@@ -744,7 +735,13 @@ impl Insurance {
     /// # Returns
     /// PolicyPage { items, next_cursor, count }
     pub fn get_active_policies(env: Env, owner: Address, cursor: u32, limit: u32) -> PolicyPage {
-        Self::require_initialized(&env).unwrap();
+        if Self::require_initialized(&env).is_err() {
+            return PolicyPage {
+                items: Vec::new(&env),
+                next_cursor: 0,
+                count: 0,
+            };
+        }
         let policies: Map<u32, InsurancePolicy> = env
             .storage()
             .instance()
@@ -796,7 +793,9 @@ impl Insurance {
     /// # Returns
     /// Total monthly premium amount for the owner's active policies
     pub fn get_total_monthly_premium(env: Env, owner: Address) -> i128 {
-        Self::require_initialized(&env).unwrap();
+        if Self::require_initialized(&env).is_err() {
+            return 0;
+        }
         if let Some(totals) = Self::get_active_premium_totals_map(&env) {
             if let Some(total) = totals.get(owner.clone()) {
                 return total;

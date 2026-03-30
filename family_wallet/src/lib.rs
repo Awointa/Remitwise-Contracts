@@ -180,7 +180,7 @@ pub struct SpendingTracker {
 
 /// Enhanced spending limit with precision controls
 #[contracttype]
-#[derive(Clone)]
+#[derive(Clone, Copy)]
 pub struct PrecisionSpendingLimit {
     /// Base spending limit per period
     pub limit: i128,

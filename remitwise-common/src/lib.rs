@@ -84,45 +84,6 @@ pub const CONTRACT_VERSION: u32 = 1;
 pub const MAX_BATCH_SIZE: u32 = 50;
 
 /// Helper function to clamp limit
-///
-/// # Behavior Contract
-///
-/// `clamp_limit` normalises a caller-supplied page-size value so that every
-/// pagination call in the workspace uses a consistent, bounded limit.
-///
-/// ## Rules (in evaluation order)
-///
-/// | Input condition          | Returned value        | Rationale                                      |
-/// |--------------------------|----------------------|------------------------------------------------|
-/// | `limit == 0`             | `DEFAULT_PAGE_LIMIT` | Zero is treated as "use the default".          |
-/// | `limit > MAX_PAGE_LIMIT` | `MAX_PAGE_LIMIT`     | Cap to prevent unbounded storage reads.        |
-/// | otherwise                | `limit`              | Caller value is within the valid range.        |
-///
-/// ## Invariants
-///
-/// - The return value is always in the range `[1, MAX_PAGE_LIMIT]`.
-/// - `clamp_limit(0) == DEFAULT_PAGE_LIMIT` (default substitution).
-/// - `clamp_limit(MAX_PAGE_LIMIT) == MAX_PAGE_LIMIT` (boundary is inclusive).
-/// - `clamp_limit(MAX_PAGE_LIMIT + 1) == MAX_PAGE_LIMIT` (cap is enforced).
-/// - The function is pure and has no side effects.
-///
-/// ## Security Assumptions
-///
-/// - Callers must not rely on receiving a value larger than `MAX_PAGE_LIMIT`.
-/// - A zero input is **not** an error; it is silently replaced with the default.
-///   Contracts that need to distinguish "no limit requested" from "default limit"
-///   should inspect the raw input before calling this function.
-///
-/// ## Usage
-///
-/// ```rust
-/// use remitwise_common::{clamp_limit, DEFAULT_PAGE_LIMIT, MAX_PAGE_LIMIT};
-///
-/// assert_eq!(clamp_limit(0),                  DEFAULT_PAGE_LIMIT);
-/// assert_eq!(clamp_limit(10),                 10);
-/// assert_eq!(clamp_limit(MAX_PAGE_LIMIT),     MAX_PAGE_LIMIT);
-/// assert_eq!(clamp_limit(MAX_PAGE_LIMIT + 1), MAX_PAGE_LIMIT);
-/// ```
 pub fn clamp_limit(limit: u32) -> u32 {
     if limit == 0 {
         DEFAULT_PAGE_LIMIT
@@ -134,31 +95,9 @@ pub fn clamp_limit(limit: u32) -> u32 {
 }
 
 /// Event emission helper
-///
-/// # Deterministic topic naming
-///
-/// All events emitted via `RemitwiseEvents` follow a deterministic topic schema:
-///
-/// 1. A fixed namespace symbol: `"Remitwise"`.
-/// 2. An event category as `u32` (see `EventCategory`).
-/// 3. An event priority as `u32` (see `EventPriority`).
-/// 4. An action `Symbol` describing the specific event or a subtype (e.g. `"created"`).
-///
-/// This ordering allows consumers to index and filter events reliably across contracts.
 pub struct RemitwiseEvents;
 
 impl RemitwiseEvents {
-    /// Emit a single event with deterministic topics.
-    ///
-    /// # Parameters
-    /// - `env`: Soroban environment used to publish the event.
-    /// - `category`: Logical event category (`EventCategory`).
-    /// - `priority`: Event priority (`EventPriority`).
-    /// - `action`: A `Symbol` identifying the action or event name.
-    /// - `data`: The serializable payload for the event.
-    ///
-    /// # Security
-    /// Do not include sensitive personal data in `data` because events are publicly visible on-chain.
     pub fn emit<T>(
         env: &soroban_sdk::Env,
         category: EventCategory,
@@ -177,10 +116,6 @@ impl RemitwiseEvents {
         env.events().publish(topics, data);
     }
 
-    /// Emit a small batch-style event indicating bulk operations.
-    ///
-    /// The `action` parameter is included in the payload rather than as the final topic
-    /// to make the topic schema consistent for batch analytics.
     pub fn emit_batch(env: &soroban_sdk::Env, category: EventCategory, action: Symbol, count: u32) {
         let topics = (
             symbol_short!("Remitwise"),
